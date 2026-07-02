@@ -82,6 +82,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [accSort, setAccSort] = useState<SortState>({ key: "spend", dir: -1 });
   const [adSort, setAdSort] = useState<SortState>({ key: "spend", dir: -1 });
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -106,6 +107,18 @@ export default function Dashboard() {
       }
     } catch { /* ignore */ }
   }, []);
+
+  // ธีม (จำใน localStorage)
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("ads-theme");
+      if (saved === "light" || saved === "dark") setTheme(saved);
+    } catch { /* ignore */ }
+  }, []);
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    try { localStorage.setItem("ads-theme", theme); } catch { /* ignore */ }
+  }, [theme]);
 
   const groupsParam = useMemo(() => {
     const j = JSON.stringify(groupsCfg);
@@ -207,6 +220,7 @@ export default function Dashboard() {
               ))}
             </div>
             <label className="toggle"><input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} />auto 15s</label>
+            <button className="btn" onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))} title="สลับธีม สว่าง/มืด">{theme === "dark" ? "☀︎" : "☾"}</button>
             <button className="btn" onClick={load}>↻</button>
             <button className="btn" onClick={() => setEditOpen((v) => !v)}>⚙︎ กลุ่ม</button>
             <button className="btn" onClick={exportCSV}>⬇︎ CSV</button>
@@ -360,39 +374,67 @@ export default function Dashboard() {
   );
 }
 
-// ─── กราฟเทรนด์ stacked columns ต่อวัน ──────────────────────────────
+// ─── กราฟเทรนด์ stacked area ต่อวัน ─────────────────────────────────
 function TrendChart({ data, groups }: { data: Metrics; groups: any[] }) {
   const series = data.series || [];
   if (series.length === 0) return null;
-  const W = 900, H = 200, pad = 24;
+  const W = 960, H = 250, padL = 44, padR = 14, padT = 14, padB = 26;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+  const n = series.length;
   const keys = groups.map((g) => g.key);
   const totals = series.map((p) => keys.reduce((s, k) => s + (p.byGroup[k] || 0), 0));
   const max = Math.max(1, ...totals);
-  const step = (W - pad * 2) / series.length;
-  const barW = Math.max(4, step * 0.7);
+  const X = (i: number) => (n === 1 ? padL + innerW / 2 : padL + (i / (n - 1)) * innerW);
+  const Y = (v: number) => padT + innerH - (v / max) * innerH;
+
+  // ซ้อนกลุ่มจากล่างขึ้นบน (stacked)
+  const cum = new Array(n).fill(0);
+  const layers = keys.map((k) => {
+    const lower = [...cum];
+    for (let i = 0; i < n; i++) cum[i] += series[i].byGroup[k] || 0;
+    const upper = [...cum];
+    const g = groups.find((x) => x.key === k);
+    let area = `M ${X(0)} ${Y(upper[0])}`;
+    for (let i = 1; i < n; i++) area += ` L ${X(i)} ${Y(upper[i])}`;
+    for (let i = n - 1; i >= 0; i--) area += ` L ${X(i)} ${Y(lower[i])}`;
+    area += " Z";
+    let line = `M ${X(0)} ${Y(upper[0])}`;
+    for (let i = 1; i < n; i++) line += ` L ${X(i)} ${Y(upper[i])}`;
+    return { k, color: g?.color as string, area, line };
+  });
+
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => ({ v: max * f, y: Y(max * f) }));
+  const fmtK = (v: number) => (v >= 1000 ? (v / 1000).toFixed(1) + "k" : String(Math.round(v)));
+  const xticks = n > 1 ? [0, Math.floor((n - 1) / 2), n - 1] : [0];
 
   return (
     <div className="panel">
-      <h2>เทรนด์รายวัน (spend){data.series[0]?.demo && <span className="hint">demo — ประมาณจากยอดรวม (live = รายวันจริง)</span>}</h2>
+      <h2>เทรนด์รายวัน · ค่าใช้จ่าย{data.series[0]?.demo && <span className="hint">demo — ประมาณจากยอดรวม (live = รายวันจริง)</span>}</h2>
       <div className="tbl-scroll">
-        <svg viewBox={`0 0 ${W} ${H}`} className="trend" preserveAspectRatio="none">
-          {series.map((p, i) => {
-            let y = H - pad;
-            const x = pad + i * step + (step - barW) / 2;
-            return (
-              <g key={i}>
-                {keys.map((k) => {
-                  const v = p.byGroup[k] || 0;
-                  if (v <= 0) return null;
-                  const h = ((v / max) * (H - pad * 2));
-                  y -= h;
-                  const g = groups.find((x) => x.key === k);
-                  return <rect key={k} x={x} y={y} width={barW} height={h} fill={g?.color} />;
-                })}
-              </g>
-            );
-          })}
-          <line x1={pad} y1={H - pad} x2={W - pad} y2={H - pad} stroke="#334155" />
+        <svg viewBox={`0 0 ${W} ${H}`} className="trend" role="img" aria-label="กราฟเทรนด์ค่าใช้จ่ายรายวันแยกกลุ่ม">
+          <defs>
+            {layers.map((l) => (
+              <linearGradient id={`g-${l.k}`} key={l.k} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={l.color} stopOpacity="0.45" />
+                <stop offset="100%" stopColor={l.color} stopOpacity="0.05" />
+              </linearGradient>
+            ))}
+          </defs>
+          {ticks.map((t, i) => (
+            <g key={i}>
+              <line className="grid" x1={padL} y1={t.y} x2={W - padR} y2={t.y} />
+              <text className="axis" x={padL - 7} y={t.y + 3.5} textAnchor="end">{fmtK(t.v)}</text>
+            </g>
+          ))}
+          {layers.map((l) => <path key={l.k} d={l.area} fill={`url(#g-${l.k})`} />)}
+          {layers.map((l) => <path key={l.k + "L"} d={l.line} fill="none" stroke={l.color} strokeWidth={1.6} strokeLinejoin="round" />)}
+          <circle className="endpt" cx={X(n - 1)} cy={Y(totals[n - 1])} r={4} fill="var(--accent)" />
+          {xticks.map((i) => (
+            <text key={i} className="axis" x={X(i)} y={H - 7} textAnchor={i === 0 ? "start" : i === n - 1 ? "end" : "middle"}>
+              {series[i].date?.slice(5)}
+            </text>
+          ))}
         </svg>
       </div>
       <div className="legend">
