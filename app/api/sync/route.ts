@@ -18,6 +18,13 @@ async function handle(req: NextRequest) {
   const key = req.nextUrl.searchParams.get("key") || req.headers.get("x-cron-key");
   const secret = process.env.CRON_SECRET;
   const fromVercelCron = req.headers.get("x-vercel-cron") !== null;
+  // บังคับต้องมี CRON_SECRET เสมอ (กันคนนอกยิงให้ระบบดึง Meta รัว ๆ / เปลืองโควตา)
+  if (!secret && !fromVercelCron) {
+    return NextResponse.json(
+      { ok: false, error: "ยังไม่ได้ตั้ง CRON_SECRET — ต้องตั้งก่อนถึงจะยิง /api/sync ได้ (กันคนนอก)" },
+      { status: 403 }
+    );
+  }
   if (secret && key !== secret && !fromVercelCron) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }

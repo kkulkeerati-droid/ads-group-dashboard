@@ -96,9 +96,14 @@ export default function Dashboard() {
     if (pr) setPreset(pr);
     if (m) setMetric(m as MetricKey);
     if (u.searchParams.get("ro") === "1") setReadOnly(true);
+    // กติกากลุ่ม: URL (ลิงก์แชร์) มาก่อน แล้วค่อย localStorage ของเครื่องนี้
+    const gp = u.searchParams.get("groups");
     try {
-      const saved = localStorage.getItem("ads-groups");
-      if (saved) setGroupsCfg(JSON.parse(saved));
+      if (gp) setGroupsCfg(JSON.parse(gp));
+      else {
+        const saved = localStorage.getItem("ads-groups");
+        if (saved) setGroupsCfg(JSON.parse(saved));
+      }
     } catch { /* ignore */ }
   }, []);
 
@@ -135,6 +140,8 @@ export default function Dashboard() {
   const mMeta = METRICS.find((m) => m.key === metric)!;
   const groupVal = (g: any) => (g[metric] as number) || 0;
   const maxVal = Math.max(1, ...groups.map(groupVal));
+  // เมตริก "ยิ่งน้อยยิ่งดี" (CPR/CPM) ที่เป็น 0 = ไม่มีข้อมูล → โชว์ "–"
+  const showVal = (v: number) => (mMeta.lowerBetter && !v ? "–" : fmtMetric(v, mMeta.money));
 
   const sortedAccounts = useMemo(() => (data ? sortRows(data.accounts, accSort, accGetVal) : []), [data, accSort]);
   const sortedTopAds = useMemo(() => (data ? sortRows(data.topAds, adSort, adGetVal) : []), [data, adSort]);
@@ -145,6 +152,7 @@ export default function Dashboard() {
     u.searchParams.set("preset", preset);
     u.searchParams.set("metric", metric);
     u.searchParams.set("ro", "1");
+    if (groupsParam) u.searchParams.set("groups", groupsParam); // พกกติกากลุ่มที่แก้ไปด้วย
     navigator.clipboard.writeText(u.toString());
     setCopied(true);
     setTimeout(() => setCopied(false), 1800);
@@ -243,13 +251,13 @@ export default function Dashboard() {
           <div className="cards">
             <div className="card" style={{ ["--c" as any]: "#3b82f6" }}>
               <div className="k">รวมทั้งหมด</div>
-              <div className="v">{fmtMetric((data as any)[metric], mMeta.money)}</div>
+              <div className="v">{showVal((data as any)[metric] || 0)}</div>
               <div className="m">{data.accounts.length} บัญชี · {mMeta.label}</div>
             </div>
             {groups.map((g) => (
               <div className="card" key={g.key} style={{ ["--c" as any]: g.color }}>
                 <div className="k"><span className="dot" />{g.label}</div>
-                <div className="v">{fmtMetric(groupVal(g), mMeta.money)}</div>
+                <div className="v">{showVal(groupVal(g))}</div>
                 <div className="m">
                   ฿{nInt(g.spend)} · {g.ads} ads{g.resultType ? ` · ${g.resultType}` : ""}
                 </div>
@@ -265,7 +273,7 @@ export default function Dashboard() {
                 <div className="bar-track">
                   <div className="bar-fill" style={{ width: `${(groupVal(g) / maxVal) * 100}%`, background: g.color }} />
                 </div>
-                <div className="amt">{fmtMetric(groupVal(g), mMeta.money)}{metric === "spend" && <span className="pct">{(g.share * 100).toFixed(1)}%</span>}</div>
+                <div className="amt">{showVal(groupVal(g))}{metric === "spend" && <span className="pct">{(g.share * 100).toFixed(1)}%</span>}</div>
               </div>
             ))}
           </div>
