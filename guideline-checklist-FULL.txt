@@ -1,0 +1,365 @@
+Ads Dashboard — Go-Live Checklist (ฉบับละเอียด)
+AD
+Ads Dashboard
+Go-Live Runbook · Next.js + Supabase + Vercel
+Go-Live Checklist — ฉบับละเอียดสำหรับมือใหม่
+คู่มือพาขึ้นระบบจริงทีละขั้น ตั้งแต่ "ต้องสมัครบัญชีอะไรก่อน" และ "โฟลเดอร์ตอนนั้นหน้าตาเป็นยังไง" จนถึงเชื่อม Meta · Google Ads · TikTok · TikTok Shop GMV Max ตั้งโดเมน เปิดล็อกอิน และส่งลิงก์รายงานให้ลูกค้า — อ่านแล้วทำตามได้แม้ไม่เคยเขียนโค้ด ติ๊กไปทีละข้อ ระบบจำความคืบหน้าให้อัตโนมัติ
+ความคืบหน้า 0%
+0 / 0 ข้อ
+ล้างทั้งหมด
+ระบบนี้ทำงานยังไง (อ่าน 1 นาทีก่อนเริ่ม) ใช้ของฟรีล้วน
+พูดง่าย ๆ คือ เรามี "เว็บแดชบอร์ด" วางอยู่บนอินเทอร์เน็ต (Vercel) มี "ตู้เก็บข้อมูล" (Supabase) และมี "นาฬิกาปลุก" (cron-job.org) คอยสะกิดให้เว็บไปดึงตัวเลขโฆษณาจาก Meta/Google/TikTok มาเก็บไว้เรื่อย ๆ พอเปิดรายงานก็เห็นเลขล่าสุดทันที
+นาฬิกาปลุก (cron-job.org) →
+เว็บ /api/sync →
+ดึงจาก Meta / Google / TikTok →
+เก็บใน Supabase →
+เปิดรายงานเห็นเลขจริง
+คุณกรอกเอง = มีรหัสลับ (token/key) ผู้ช่วยกรอกแทนไม่ได้
+โค้ดพร้อมแล้ว = มีในโปรเจกต์ให้แล้ว แค่ตรวจ
+ลำดับงานคร่าว ๆ: เตรียมเครื่องมือ + สมัครบัญชี → รู้จักโฟลเดอร์ + เทมเพลต → เอาโค้ดขึ้น GitHub → สร้างฐานข้อมูล → ขอ token แต่ละแพลตฟอร์ม → เอาขึ้น Vercel → ใส่บัญชีโฆษณา → ทดสอบ → ตั้งนาฬิกาปลุก → ตั้งโดเมน + ล็อกอิน → สร้างผู้ใช้ + เปิดใช้จริง
+1
+เตรียมเครื่องมือ + สมัครบัญชีให้ครบก่อน คุณทำเอง
+ทุกอย่างฟรี · ทำให้เสร็จก่อนค่อยไปขั้นถัดไป จะได้ไม่ติดกลางทาง
+▶
+ขั้นนี้คือ "ซื้อของเข้าครัว" ก่อนทำกับข้าว — สมัครบัญชีบริการที่ใช้ และติดตั้งโปรแกรมบนเครื่อง 2–3 ตัว แต่ละอันคืออะไรอธิบายไว้ในแต่ละข้อแล้ว
+ก) ติดตั้งโปรแกรมบนเครื่องคอมพิวเตอร์
+1.1 ติดตั้ง Node.js เวอร์ชัน LTS จาก nodejs.org (กด Next ไปเรื่อย ๆ) คือโปรแกรมที่ทำให้เครื่องรันโค้ดของเว็บได้ จำเป็นถ้าอยากลองเปิดเว็บบนเครื่องตัวเองก่อน (localhost) · ตรวจว่าติดตั้งสำเร็จโดยเปิด Command Prompt พิมพ์ node -v ต้องขึ้นเลขเวอร์ชัน
+1.2 ติดตั้ง Git จาก git-scm.com เครื่องมือส่งโค้ดจากเครื่องขึ้นไปเก็บบน GitHub · ตรวจด้วย git --version
+1.3 (แนะนำ) ติดตั้ง VS Code จาก code.visualstudio.com โปรแกรมเปิด/แก้ไฟล์โค้ด ใช้ดูโปรเจกต์สะดวกกว่า Notepad — ไม่บังคับ แต่ช่วยได้มาก
+ข) สมัครบัญชีบริการออนไลน์ (ฟรีทั้งหมด)
+1.4 สมัคร GitHub ที่ github.com ที่เก็บโค้ดออนไลน์ — เปรียบเหมือน Google Drive ของโค้ด · Vercel จะดึงโค้ดจากที่นี่ไปรัน
+1.5 สมัคร Supabase ที่ supabase.com (กด Sign in with GitHub ได้เลย) ฐานข้อมูล + ระบบล็อกอินสำเร็จรูป — เก็บตัวเลขโฆษณา รายชื่อบัญชี ผู้ใช้ ฯลฯ
+1.6 สมัคร Vercel ที่ vercel.com (กด Continue with GitHub) ที่โฮสต์เว็บ — เอาโค้ดจาก GitHub มาทำให้เปิดได้จริงบนอินเทอร์เน็ต ฟรีพอสำหรับงานนี้
+1.7 สมัคร cron-job.org ที่ cron-job.org "นาฬิกาปลุก" ฟรี — คอยยิงเข้าเว็บทุก 5 นาทีให้ระบบดึงข้อมูลใหม่อัตโนมัติ
+ค) บัญชีฝั่งแพลตฟอร์มโฆษณา (เตรียมเฉพาะตัวที่จะใช้)
+1.8 Meta: มี Business Manager ที่เห็นบัญชีโฆษณาลูกค้า + สิทธิ์ Admin ถ้ายังไม่มี Business Manager ให้สร้างก่อน แล้วให้ลูกค้าแชร์ Ad Account เข้ามา
+1.9 Google: มีบัญชี Google Ads แบบ MCC (บัญชีศูนย์กลางที่คุมหลายบัญชี) + บัญชี Google Cloud Console MCC = My Client Center บัญชีแม่ที่ดูบัญชีลูกค้าหลายตัวได้ · Google Cloud ใช้ขอสิทธิ์เข้า API
+1.10 TikTok: สมัคร TikTok for Developers + เข้าถึง TikTok Ads Manager ของลูกค้า สำหรับ GMV Max ต้องเข้าถึง TikTok Shop ของลูกค้าด้วย
+ยังไม่พร้อมครบทุกแพลตฟอร์มก็ไม่เป็นไร — เริ่มจากตัวที่พร้อมก่อน (เช่น Meta) แล้วค่อยเพิ่มทีหลังได้ ระบบไม่พังกัน
+2
+เอาโปรเจกต์ลงเครื่อง + รู้จักโฟลเดอร์/เทมเพลต คุณทำเอง
+เห็นภาพว่าในโฟลเดอร์มีอะไรบ้าง อะไรห้ามแตะ และโฟลเดอร์ไหน "โผล่มาเอง" ทีหลัง
+▶
+ตอนนี้ในเครื่องคุณยังไม่มีโฟลเดอร์โปรเจกต์ และจะไม่มีใครส่งไฟล์ให้ — คุณต้อง "สร้างโปรเจกต์ขึ้นมาเอง" จากศูนย์ ข้อ ก) ด้านล่างจะพาสร้างโครงเปล่า ๆ ด้วยเครื่องมือมาตรฐาน แล้วเติมโฟลเดอร์ที่เหลือเข้าไปให้ครบตามผัง
+ก) สร้างโปรเจกต์ขึ้นมาเองตั้งแต่ศูนย์
+เราใช้คำสั่ง create-next-app ซึ่งเป็นตัวสร้างโครงเว็บ Next.js อัตโนมัติ — มันจะปั้นโฟลเดอร์ src/app/ , public/ , ไฟล์ package.json , .gitignore และติดตั้ง node_modules/ ให้เสร็จในคำสั่งเดียว จากนั้นค่อยสร้างโฟลเดอร์ที่เหลือเองอีกนิด
+2.1 เปิด Command Prompt / Terminal แล้ว cd ไปยังที่ที่อยากเก็บงาน เช่นหน้า Desktop
+คัดลอก
+cd Desktop
+2.2 สร้างโครงโปรเจกต์ชื่อ dashboard ด้วยคำสั่งนี้ (มันจะถามตั้งค่า ตอบตามกล่องสีเหลืองด้านล่าง)
+คัดลอก
+npx create-next-app@latest dashboard
+ตอบคำถามที่มันถามดังนี้: TypeScript? → No · ESLint? → Yes · Tailwind CSS? → Yes · `src/` directory? → Yes (สำคัญ) · App Router? → Yes (สำคัญ) · Turbopack? → Yes · import alias? → กด Enter ผ่าน
+คำว่า dashboard คือชื่อโฟลเดอร์ที่จะถูกสร้าง — ในคู่มือนี้เราเรียกว่า dashboard ตลอด
+2.3 เข้าไปในโฟลเดอร์ที่เพิ่งสร้าง แล้วเปิดด้วย VS Code
+คัดลอก
+cd dashboard
+code .
+2.4 สร้างโฟลเดอร์ที่ตัวสร้างอัตโนมัติ ยังไม่ได้ทำให้ (templates, components, lib, migrations) ด้วยคำสั่งนี้
+คัดลอก
+mkdir public/templates src/components src/lib supabase
+บน Windows ถ้าใช้ Command Prompt ให้สลับเป็น backslash และทำทีละบรรทัด เช่น mkdir public\templates ... ส่วนโฟลเดอร์ย่อย migrations พิมพ์ mkdir supabase\migrations
+2.5 ติดตั้งแพ็กเกจเสริมที่ระบบต้องใช้ (ตัวเชื่อม Supabase)
+คัดลอก
+npm install @supabase/supabase-js
+สำคัญที่สุดของขั้นนี้: ตอนนี้คุณได้แค่ "โครงเปล่า" ของเว็บ Next.js — ตัวที่ทำให้มันกลายเป็นแดชบอร์ดจริงคือ ไฟล์โค้ดของระบบ ที่ต้องไปวางในแต่ละโฟลเดอร์ ได้แก่ หน้า/เอพีไอใน src/app/ (เช่น api/sync , api/metrics ), ตัวเชื่อมแพลตฟอร์มใน src/lib/ , ไฟล์ SQL 5 ไฟล์ใน supabase/migrations/ และไฟล์เทมเพลต 4 ไฟล์ + โลโก้ใน public/templates/ (เทมเพลตนี้ คุณต้องออกแบบ/เขียนเอง — ดูรายละเอียดด้านล่าง) — เตรียมไฟล์เหล่านี้ให้ครบตามผังด้านล่างก่อนไปขั้นถัดไป
+ข) ผังโฟลเดอร์ "ตอนเสร็จแล้ว" (ใส่ไฟล์ครบควรเห็นแบบนี้)
+dashboard/ ← โฟลเดอร์โปรเจกต์ (รากของทุกอย่าง)
+├─ public/
+│ └─ templates/ ← หน้า dashboard ที่ "คุณต้องออกแบบ/สร้างเอง" (ตั้งชื่อไฟล์ตามนี้เป๊ะ)
+│ ├─ meta-dashboard.html ← คุณสร้างเอง
+│ ├─ google-dashboard.html ← คุณสร้างเอง
+│ ├─ tiktok-dashboard.html ← คุณสร้างเอง
+│ ├─ tiktok-gmvmax-dashboard.html ← คุณสร้างเอง
+│ └─ logo-M.png ← โลโก้หน้า login (คุณใส่รูปเอง)
+├─ src/
+│ ├─ app/ ← หน้าเว็บ + API ทั้งหมด (/api/sync, /api/metrics ...)
+│ ├─ components/ ← ชิ้นส่วนหน้าจอที่ใช้ซ้ำ
+│ └─ lib/ ← โค้ดเชื่อม Meta/Google/TikTok + Supabase
+├─ supabase/
+│ └─ migrations/ ← ไฟล์ SQL 5 ไฟล์ (0001 ถึง 0005) ใช้ในขั้น 4
+├─ .env.local.example ← รายชื่อ "ตัวแปรลับ" ทั้งหมด (ดูเป็นตัวอย่าง)
+├─ package.json ← รายชื่อแพ็กเกจที่ต้องติดตั้ง
+├─ vercel.json ← ตั้งค่า cron สำรองของ Vercel
+└─ .gitignore ← กันไฟล์ลับ/ไฟล์ใหญ่ ไม่ให้ขึ้น Git
+* ชื่ออาจต่างเล็กน้อยตามเครื่อง แต่โครงหลัก public / src / supabase ต้องมีครบ
+โฟลเดอร์/ไฟล์ที่ "โผล่มาเอง" ทีหลัง (ไม่ต้องสร้าง — ระบบสร้างให้)
+node_modules/ ← โผล่หลังรัน npm install (รวมแพ็กเกจ ใหญ่มาก ห้ามแก้)
+.next/ ← โผล่หลังรัน npm run dev / build (ไฟล์ที่ระบบสร้างเอง)
+.git/ ← โผล่หลังรัน git init (เก็บประวัติเวอร์ชันโค้ด)
+.env.local ← คุณสร้างเองเฉพาะถ้าจะรันบนเครื่อง (ก็อปจาก .env.local.example)
+สรุปกฎทอง: 3 ตัวบนนี้ (node_modules, .next, .git) ถูกตั้งใน .gitignore ให้ไม่ขึ้น GitHub อยู่แล้ว ปล่อยมันไว้เฉย ๆ ไม่ต้องไปยุ่ง
+2.6 เปิดโฟลเดอร์โปรเจกต์แล้วไล่เทียบกับผังด้านบน — ยืนยันว่ามี public/ , src/ , supabase/ ครบ
+2.7 สร้างไฟล์เทมเพลตทั้ง 4 ไฟล์ใน public/templates/ ด้วย ชื่อตามตารางด้านล่างให้ตรงเป๊ะ (สร้างเป็นไฟล์ .html เปล่า ๆ ไว้ก่อนก็ได้ แล้วค่อยออกแบบหน้าตาทีหลัง)
+เรื่อง "เทมเพลต" — คุณต้องออกแบบและสร้างเอง
+เทมเพลตคือ "หน้าตา dashboard" ที่ลูกค้าเห็นตอนเปิดรายงาน — ไม่มีใครทำมาให้ คุณต้องออกแบบและเขียนเองทั้งหมด โดยสร้างเป็นไฟล์ HTML วางไว้ใน public/templates/ ระบบจะ เลือกเทมเพลตให้อัตโนมัติตามแพลตฟอร์มของบัญชี ตอนเปิดรายงาน (ขั้นที่ 14) โดยโหลดไฟล์เข้ามาแสดงใน iframe พร้อมส่งพารามิเตอร์ ?sources= (ไอดีบัญชี), &token= และ &ro=1 (โหมดอ่านอย่างเดียว) มาให้ — หน้าที่ของเทมเพลตคือยิงไปดึงตัวเลขจริงจาก /api/metrics แล้วเอามาวาดเป็นกราฟ/ตารางเอง
+กฎเหล็กของชื่อไฟล์: ระบบมองหาไฟล์ตาม "ชื่อเป๊ะ" ในตารางนี้เท่านั้น ถ้าตั้งชื่อผิดแม้แต่ตัวเดียว (เช่น Meta-Dashboard.html หรือ meta_dashboard.html ) ระบบจะหาไม่เจอและเปิดหน้า dashboard ไม่ได้ — ต้องเป็นตัวพิมพ์เล็กและขีดกลางตามนี้เป๊ะ
+บัญชีเป็นแพลตฟอร์ม
+ต้องตั้งชื่อไฟล์ให้ตรงเป๊ะ (คุณสร้างเอง)
+Meta
+meta-dashboard.html
+Google Ads
+google-dashboard.html
+TikTok (ปกติ)
+tiktok-dashboard.html
+TikTok GMV Max
+tiktok-gmvmax-dashboard.html
+2.8 เข้าใจแล้วว่า "เทมเพลตทั้ง 4 เป็นหน้าที่คุณออกแบบ/เขียนเอง" — ใช้ชื่อไฟล์ตามตาราง, โหลดใน iframe, และต้อง fetch /api/metrics เพื่อดึงตัวเลขมาวาด
+2.9 (ไม่บังคับ) อยากใส่โลโก้หน้า login เป็นของตัวเอง → เอารูปมาวางที่ public/templates/logo-M.png โดยใช้ชื่อไฟล์นี้ ถ้าไม่มีไฟล์นี้ ระบบจะแสดงตัวอักษรแทนให้เอง ไม่พัง
+ทำหน้าตาทีหลังได้: ตอนนี้แค่สร้างไฟล์ทั้ง 4 ให้ "มีอยู่จริงและชื่อถูก" ก่อน เพื่อให้ระบบเปิดได้ ส่วนการดีไซน์กราฟ/ตารางให้สวยค่อยกลับมาทำในเทมเพลตทีหลังได้เรื่อย ๆ
+3
+เอาโค้ดโปรเจกต์ขึ้น GitHub คุณทำเอง
+เพื่อให้ Vercel ดึงไปรันได้ · ทำในโฟลเดอร์โปรเจกต์
+▶
+เปิด Command Prompt / PowerShell แล้วพิมพ์ cd ตามด้วยที่อยู่โฟลเดอร์โปรเจกต์ (หรือคลิกขวาในโฟลเดอร์ → Open in Terminal) จากนั้นทำตามนี้
+3.1 สร้าง repo ว่าง ๆ บน GitHub (กดปุ่ม New repository ตั้งเป็น Private)
+3.2 ในโฟลเดอร์โปรเจกต์ พิมพ์คำสั่งทีละบรรทัด
+คัดลอก
+git init
+git add .
+git commit -m "first commit"
+หลังคำสั่งนี้ในโฟลเดอร์จะเริ่มมี .git/ โผล่มาเอง (ประวัติเวอร์ชัน) — ปล่อยไว้ ไม่ต้องยุ่ง
+ไฟล์ .gitignore ในโปรเจกต์กัน node_modules , .next และ .env.local (ไฟล์รหัสลับ) ไม่ให้หลุดขึ้น GitHub ไว้ให้แล้ว — ปลอดภัย
+3.3 เชื่อมกับ repo บน GitHub แล้ว push (เปลี่ยน URL เป็นของ repo คุณ ตามที่หน้า GitHub บอก)
+คัดลอก
+git remote add origin https://github.com/<ชื่อคุณ>/<ชื่อ-repo>.git
+git branch -M main
+git push -u origin main
+3.4 รีเฟรชหน้า GitHub — ต้องเห็นไฟล์โปรเจกต์ขึ้นครบ (เห็น public/, src/, supabase/ แต่ ไม่ เห็น node_modules กับ .env.local = ถูกต้อง)
+หมายเหตุ: create-next-app ในขั้น 2.2 อาจตั้ง .git ให้อัตโนมัติอยู่แล้ว ถ้าพิมพ์ git init ซ้ำก็ไม่เป็นไร (ไม่พัง) · ถ้า git remote add origin ขึ้นว่ามี origin อยู่แล้ว ให้ใช้ git remote set-url origin <URL repo คุณ> แทน
+4
+สร้างฐานข้อมูล Supabase + รันโครงสร้างตาราง คุณทำเอง
+รันไฟล์ SQL 5 ไฟล์ตามลำดับ — สำคัญมากต้องครบและเรียงถูก
+▶
+"ตาราง" ในฐานข้อมูลคือช่องเก็บข้อมูลแต่ละชนิด (บัญชีโฆษณา, ตัวเลข, ผู้ใช้ ฯลฯ) เราจะสร้างมันด้วยไฟล์คำสั่งสำเร็จรูปในโฟลเดอร์ supabase/migrations/ — แค่ก็อปวางแล้วกด Run
+4.1 ใน Supabase กด New project ตั้งชื่อ + ตั้งรหัสผ่านฐานข้อมูล (จดเก็บไว้) แล้วรอสร้างเสร็จ ~2 นาที
+4.2 เปิดเมนูซ้าย SQL Editor → กด New query
+4.3 เปิดไฟล์ supabase/migrations/0001_init.sql ในเครื่อง → ก็อปทั้งไฟล์มาวาง → กด Run สร้างตารางหลัก: profiles, customers, sources, reports, report_sources, metrics_cache + ระบบกันข้อมูลรั่ว (RLS)
+4.4 ทำซ้ำกับ 0002_branches_metrics.sql (เพิ่มชื่อสาขา + ตัวเลขทักแชท/การเข้าถึง + เวลาซิงก์ล่าสุด)
+4.5 รัน 0003_shared_reports.sql (ตารางลิงก์รายงานที่แชร์ให้ลูกค้าเปิดดูได้)
+4.6 รัน 0004_support_tickets.sql (เมนูแจ้งปัญหา/งานในระบบ)
+4.7 รัน 0005_tiktok_source_kind.sql (เพิ่มชนิด TikTok + Store ID)
+ห้ามข้ามไฟล์ 0005 ถ้าจะใช้ TikTok — เพราะมันเติมคอลัมน์ที่โค้ด TikTok เรียกใช้ ถ้าไม่รันจะ error ทันทีตอนซิงก์
+4.8 เปิด Table Editor เช็คว่ามีตารางครบ 6 ตัว: sources · reports · report_sources · metrics_cache · shared_reports · support_tickets
+5
+เก็บกุญแจ (Key) จาก Supabase คุณทำเอง
+จด 3 ค่าไว้ในโน้ต เดี๋ยวเอาไปใส่ Vercel ในขั้นที่ 9
+▶
+"Key" คือรหัสที่ทำให้เว็บคุยกับฐานข้อมูลได้ · ไปที่ Project Settings (รูปเฟือง) → API แล้วจด 3 ค่านี้
+5.1 ก็อป Project URL (เช่น https://xxxx.supabase.co) — ใช้กับทั้ง NEXT_PUBLIC_SUPABASE_URL และ SUPABASE_URL
+5.2 ก็อป anon public key → NEXT_PUBLIC_SUPABASE_ANON_KEY เปิดเผยได้
+5.3 ก็อป service_role key → SUPABASE_SERVICE_ROLE_KEY ความลับสูงสุด กุญแจดอกนี้เปิดได้ทุกอย่าง — ห้ามเอาไปแปะที่ไหนที่คนนอกเห็น และห้ามขึ้น GitHub เด็ดขาด
+6
+ขอ Token จาก Meta (Facebook/Instagram) คุณทำเอง
+ข้ามได้ถ้ายังไม่ใช้ Meta · ทำที่ business.facebook.com
+▶
+"Token" คือรหัสผ่านแบบพิเศษที่อนุญาตให้เว็บไปอ่านตัวเลขโฆษณาแทนเรา · เราใช้แบบ System User (ผู้ใช้ระบบ) ที่เป็นกลาง ไม่ผูกกับบัญชีคนใดคนหนึ่ง ถ้าพนักงานลาออก รายงานก็ไม่พัง
+6.1 เข้า business.facebook.com → Business Settings (การตั้งค่าธุรกิจ)
+6.2 เมนู Users → System Users → กด Add สร้างผู้ใช้ระบบ เลือก role Admin
+6.3 กด Add Assets → แท็บ Ad Accounts → เลือกบัญชีโฆษณาลูกค้าทุกตัวที่จะดึง → ให้สิทธิ์อย่างน้อย View Performance
+6.4 กด Generate New Token → เลือกแอป → ติ๊กสิทธิ์ ads_read และ read_insights → เลือกแบบ ไม่มีวันหมดอายุ ถ้าทำได้
+6.5 ก็อป token เก็บไว้ในโน้ต → เดี๋ยวใส่เป็น META_SYSTEM_USER_TOKEN ที่ Vercel (ขั้น 9) ความลับ
+6.6 จด Ad Account ID ของแต่ละบัญชี (ขึ้นต้น act_ ดูได้ใน Ads Manager) — ใช้ตอนใส่บัญชีในขั้น 10
+เอกสารทางการ (ถ้าหน้าจอไม่ตรง): Meta System Users
+7
+ขอกุญแจ Google Ads — 5 ค่า คุณทำเอง
+ข้ามได้ถ้ายังไม่ใช้ Google · ขั้นนี้ยุ่งสุด ค่อย ๆ ทำตามลำดับ
+▶
+Google Ads ต้องการ 5 ค่า เพราะมันออกแบบมาให้ปลอดภัยมาก ระบบจะเอา Refresh Token ไปแลกเป็นรหัสชั่วคราวเองทุกครั้งที่ดึงข้อมูล (คุณไม่ต้องทำอะไรเพิ่มหลังตั้งเสร็จ)
+7.1 ใน Google Ads (บัญชี MCC) เปิด Tools → API Center ขอ Developer Token (ระดับ Basic Access พอ) → GOOGLE_ADS_DEVELOPER_TOKEN Developer Token = บัตรผ่านเข้าใช้ API ของ Google Ads
+7.2 ใน Google Cloud Console สร้างโปรเจกต์ → เปิดใช้ Google Ads API → ไปที่ Credentials สร้าง OAuth client ID ชนิด Web application ได้มา 2 ค่า: GOOGLE_ADS_CLIENT_ID + GOOGLE_ADS_CLIENT_SECRET · ใส่ Redirect URI ว่า https://developers.google.com/oauthplayground
+7.3 เปิด OAuth Playground → (เฟือง) ติ๊ก Use your own OAuth credentials ใส่ Client ID/Secret → ขอ scope https://www.googleapis.com/auth/adwords → กดอนุญาต → ได้ Refresh token (ขึ้นต้น 1// ) → GOOGLE_ADS_REFRESH_TOKEN
+7.4 จดเลขบัญชี MCC 10 หลัก (ตัดขีด - ออก เช่น 123-456-7890 → 1234567890) → GOOGLE_ADS_LOGIN_CUSTOMER_ID
+7.5 จด Customer ID ของบัญชีลูกค้าแต่ละราย (เลข 10 หลักเหมือนกัน) — ใช้ใส่บัญชีในขั้น 10
+เอกสารทางการ: Google Ads API — OAuth setup · ระบบใช้ API เวอร์ชัน v24
+8
+ขอ Token จาก TikTok (รวม TikTok Shop GMV Max) คุณทำเอง
+ข้ามได้ถ้ายังไม่ใช้ TikTok · ใช้ token ตัวเดียวได้ทั้งโฆษณาปกติและ GMV Max
+▶
+คล้าย Meta คือต้องสร้างแอปแล้วขอ Access Token แบบระยะยาว มาใช้ดึงข้อมูล
+8.1 เข้า TikTok for Developers → สร้างแอป (Business API) ในพอร์ทัล
+8.2 ทำขั้นตอน OAuth ของ TikTok เพื่อขอ Access Token ระยะยาว (long-term) ที่เข้าถึงบัญชีโฆษณาลูกค้าได้
+8.3 ก็อป token เก็บไว้ → ใส่เป็น TIKTOK_ACCESS_TOKEN ที่ Vercel (ขั้น 9) ความลับ
+8.4 จด Advertiser ID ของแต่ละบัญชี (ดูใน TikTok Ads Manager) — ใช้ใส่บัญชีในขั้น 10
+8.5 เฉพาะ GMV Max : จด Store ID ของ TikTok Shop ลูกค้าไว้เพิ่ม (ขั้น 10 ต้องใช้)
+เอกสารทางการ: TikTok Business API Docs · ระบบใช้เวอร์ชัน v1.3
+9
+เอาเว็บขึ้น Vercel + ใส่กุญแจทั้งหมด คุณทำเอง
+นำค่าที่จดมาทั้งหมดจากขั้น 5–8 มาใส่เป็น Environment Variables
+▶
+Environment Variables (ตัวแปรสภาพแวดล้อม) คือที่เก็บรหัสลับให้เว็บใช้ โดยไม่ต้องเขียนลงในโค้ด — เก็บไว้ฝั่งเซิร์ฟเวอร์ คนนอกมองไม่เห็น · รายชื่อทั้งหมดดูได้จากไฟล์ .env.local.example ในโปรเจกต์
+9.1 ใน Vercel กด Add New → Project → เลือก import repo ที่ push ไว้ในขั้น 3
+9.2 สร้างค่า CRON_SECRET (รหัสกันคนนอกยิงระบบ) — สุ่มสตริงยาว ๆ เช่นรันคำสั่งนี้ในเครื่อง หรือพิมพ์มั่ว ๆ ยาว ๆ เองก็ได้
+คัดลอก
+openssl rand -hex 24
+9.3 ก่อนกด Deploy เปิดหัวข้อ Environment Variables ใส่ให้ครบตามตาราง (ใส่เฉพาะแพลตฟอร์มที่จะใช้จริงก็ได้)
+ชื่อตัวแปร
+เอาค่ามาจาก
+ระดับ
+NEXT_PUBLIC_SUPABASE_URL
+ขั้น 5 · Project URL
+public
+NEXT_PUBLIC_SUPABASE_ANON_KEY
+ขั้น 5 · anon
+public
+SUPABASE_URL
+ขั้น 5 · Project URL
+server
+SUPABASE_SERVICE_ROLE_KEY
+ขั้น 5 · service_role
+secret
+META_SYSTEM_USER_TOKEN
+ขั้น 6 · Meta
+secret
+TIKTOK_ACCESS_TOKEN
+ขั้น 8 · TikTok
+secret
+GOOGLE_ADS_DEVELOPER_TOKEN
+ขั้น 7 · Google
+secret
+GOOGLE_ADS_CLIENT_ID
+ขั้น 7 · Google
+secret
+GOOGLE_ADS_CLIENT_SECRET
+ขั้น 7 · Google
+secret
+GOOGLE_ADS_REFRESH_TOKEN
+ขั้น 7 · Google
+secret
+GOOGLE_ADS_LOGIN_CUSTOMER_ID
+ขั้น 7 · MCC 10 หลัก
+secret
+CRON_SECRET
+ข้อ 9.2 · สุ่มเอง
+secret
+9.4 กด Deploy รอจนเสร็จ → ได้ลิงก์เว็บ เช่น https://ชื่อโปรเจกต์.vercel.app (จดไว้ เรียกว่า "โดเมนของคุณ")
+Vercel จะอ่านไฟล์ vercel.json ตั้งนาฬิกาสำรองยิงวันละครั้งให้เอง (แนบ CRON_SECRET อัตโนมัติ) — ตัวขับหลักเราจะตั้งเองในขั้น 12
+10
+ใส่บัญชีโฆษณาเข้าระบบ (ตาราง sources ) คุณทำเอง
+บอกระบบว่าจะดึงบัญชีไหนบ้าง · ทำใน Supabase SQL Editor
+▶
+ก็อปคำสั่งตามแพลตฟอร์มที่ใช้ แล้ว แก้ค่าในวงเล็บให้เป็นของจริง (ชื่อบัญชี, ID, อีเมล) แล้ววางใน SQL Editor กด Run · credential_ref คือตัวบอกว่าให้ใช้ token ตัวไหน
+10.1 เพิ่มบัญชี Meta (external_account_id ขึ้นต้น act_ )
+คัดลอก
+insert into sources
+(platform, account_name, external_account_id, via, provider_email, status, credential_ref)
+values
+('meta', 'ลูกค้า A — ร้านอาหาร', 'act_1234567890', 'system',
+'central@yourcompany.com', 'active', 'env:META_SYSTEM_USER_TOKEN');
+10.2 เพิ่มบัญชี Google Ads (external_account_id = Customer ID 10 หลัก · credential_ref เว้น null )
+คัดลอก
+insert into sources
+(platform, account_name, external_account_id, via, provider_email, status, credential_ref)
+values
+('google', 'ลูกค้า A — Search', '123-456-7890', 'system',
+'central@yourcompany.com', 'active', null);
+10.3 เพิ่มบัญชี TikTok โฆษณาปกติ (tiktok_kind = business )
+คัดลอก
+insert into sources
+(platform, account_name, external_account_id, via, provider_email,
+status, credential_ref, tiktok_kind)
+values
+('tiktok', 'ลูกค้า A — TikTok Ads', '70123456789', 'system',
+'central@yourcompany.com', 'active', 'env:TIKTOK_ACCESS_TOKEN', 'business');
+10.4 เพิ่มบัญชี TikTok Shop GMV Max (tiktok_kind = gmv_max + ต้องมี Store ID)
+คัดลอก
+insert into sources
+(platform, account_name, external_account_id, via, provider_email,
+status, credential_ref, tiktok_kind, tiktok_store_id)
+values
+('tiktok', 'ลูกค้า A — GMV Max', '70123456789', 'system',
+'central@yourcompany.com', 'active', 'env:TIKTOK_ACCESS_TOKEN',
+'gmv_max', '7890123456');
+เคล็ดลับ: credential_ref = 'env:ชื่อ' แปลว่า "ใช้ token จากตัวแปรชื่อนั้นที่ตั้งไว้ใน Vercel" — ไม่เก็บ token จริงในฐานข้อมูล ปลอดภัยกว่า · ทำผ่านหน้าเว็บเมนู Sources ก็ได้ (แต่ต้องล็อกอินก่อน — ตั้งค่าในขั้น 13 และสร้างผู้ใช้ในขั้น 14)
+11
+ทดสอบดึงข้อมูลครั้งแรก คุณทำเอง
+เปิด URL ในเบราว์เซอร์ ใส่ค่า CRON_SECRET จริง
+▶
+11.1 เปิดลิงก์นี้ในเบราว์เซอร์ (เปลี่ยน <โดเมนของคุณ> กับ <CRON_SECRET> เป็นของจริง)
+คัดลอก
+https://<โดเมนของคุณ>/api/sync?key=<CRON_SECRET>&days=30
+11.2 ควรได้ข้อความ JSON ประมาณ {"ok":true,"due":3,"processed":3,"remaining":0,...} due = บัญชีที่ถึงคิว · processed = ดึงเสร็จแล้ว · remaining = เหลือรอรอบถัดไป (ปกติ 0 ถ้าบัญชีไม่เยอะ)
+11.3 ถ้าเจอ error รายบัญชี ใช้ตารางนี้แปล แล้วกลับไปแก้ขั้นที่เกี่ยวข้อง
+token_unresolved = token ว่าง/ใส่ผิด → กลับไปเช็ค env ขั้น 9
+META_API_ERROR = สิทธิ์ Ad Account ไม่พอ → เช็คขั้น 6.3
+GOOGLE_ADS_ENV_MISSING = env Google ไม่ครบ 5 ตัว → เช็คขั้น 7
+TIKTOK_API_ERROR = token หรือ Advertiser ID ผิด → เช็คขั้น 8
+11.4 เปิด Supabase → Table Editor → ตาราง metrics_cache ต้องมีแถวข้อมูลเข้ามาแล้ว = สำเร็จ!
+12
+ตั้งนาฬิกาปลุกให้ดึงอัตโนมัติทุก 5 นาที คุณทำเอง ฟรี
+ตัวขับหลัก — ไล่ดึงทุกบัญชีให้สดภายใน ~1 ชม. โดยไม่ค้าง
+▶
+ระบบออกแบบให้ดึง "ทีละล็อต" ครั้งละไม่กี่บัญชี (จบใต้ 60 วิ ไม่ค้าง) จึงต้องมีคนยิงเข้ามาบ่อย ๆ ให้ไล่ครบ — cron-job.org ทำหน้าที่นี้
+12.1 ใน cron-job.org กด Create cronjob
+12.2 ช่อง URL ใส่ลิงก์นี้ (เปลี่ยนเป็นของจริง)
+คัดลอก
+https://<โดเมนของคุณ>/api/sync?key=<CRON_SECRET>
+12.3 ตั้ง Schedule = Every 5 minutes → กด Save ทางเลือก (ปลอดภัยกว่า): ไม่ใส่ key ใน URL แต่ไปใส่ใน Headers เป็น Authorization: Bearer <CRON_SECRET>
+12.4 รอ ~10 นาที แล้วกลับมาเช็ค metrics_cache ว่ามีข้อมูลของทุกบัญชีอัปเดตเข้ามา
+13
+ตั้งค่าโดเมน + ระบบล็อกอิน (Auth) คุณทำเอง
+ทำให้หน้าหลังบ้านต้องล็อกอินก่อน + (ถ้าต้องการ) ใช้โดเมนของตัวเอง
+▶
+ระบบล็อกอินทำงานยังไง: หน้าหลังบ้านทั้งหมด (Home, Sources, Reports, Users) ถูก "ล็อก" ไว้ — โค้ดจะเช็คว่ามีการล็อกอิน (session) ของ Supabase ไหม ถ้า ไม่มี จะเด้งไปหน้า /login โดยอัตโนมัติ ส่วนลิงก์รายงานที่แชร์ให้ลูกค้า ( /r/<token> ) เปิดดูได้โดย ไม่ต้อง ล็อกอิน (อ่านอย่างเดียว) · ก่อนสร้างผู้ใช้ ให้ชี้ระบบ Auth ของ Supabase มาที่โดเมนของคุณก่อน
+ก) ผูก Auth ของ Supabase กับโดเมน (จำเป็น)
+13.1 เปิด Supabase → Authentication → URL Configuration
+13.2 ตั้ง Site URL = โดเมนของคุณจากขั้น 9 (เช่น https://ชื่อโปรเจกต์.vercel.app ) ค่านี้คือ "บ้านหลัก" ที่ระบบ Auth ใช้อ้างอิงตอนล็อกอิน/รีไดเร็กต์
+13.3 ในช่อง Redirect URLs เพิ่ม https://<โดเมนของคุณ>/** แล้ว Save อนุญาตให้เด้งกลับมาที่ทุกหน้าในโดเมนนี้ได้หลังล็อกอิน
+ข) ใช้โดเมนของตัวเอง + verify domain (ไม่บังคับ — ข้ามได้ถ้าใช้ .vercel.app)
+ถ้าอยากให้ลิงก์เป็นแบรนด์ตัวเอง เช่น dashboard.yourcompany.com แทน .vercel.app — Vercel จะให้ค่า DNS มาชุดหนึ่งให้เอาไปใส่ที่ผู้ให้บริการโดเมน แล้วรอ "ยืนยันโดเมน (verify)" สำเร็จ
+13.4 Vercel → โปรเจกต์ → Settings → Domains → ใส่โดเมนที่ต้องการ → กด Add
+13.5 Vercel จะโชว์ค่า DNS (เช่น CNAME หรือ A record ) → เอาไปใส่ในหน้าจัดการโดเมนของผู้ให้บริการ (เช่น GoDaddy, Cloudflare) verify domain = ขั้นที่ Vercel ตรวจว่าค่า DNS ตั้งถูก แล้วเปลี่ยนสถานะเป็น Valid (อาจรอ 5 นาที–ไม่กี่ชั่วโมง)
+13.6 เมื่อโดเมนขึ้น Valid แล้ว → กลับไป แก้ Site URL + Redirect URLs ใน Supabase (ข้อ 13.2–13.3) ให้เป็นโดเมนใหม่
+ถ้าลืมอัปเดต Site URL ให้ตรงกับโดเมนที่ใช้จริง การล็อกอินอาจเด้งกลับผิดที่ หรือขึ้น error เรื่อง redirect — เช็คจุดนี้ก่อนเสมอถ้าล็อกอินมีปัญหา
+ค) เรื่องอีเมลยืนยัน (เข้าใจไว้ ไม่ต้องทำอะไรเพิ่ม)
+ผู้ใช้ที่สร้างผ่านเมนู Users ในเว็บ (หรือผ่าน Supabase แบบ Add user) จะถูกตั้งเป็น ยืนยันอีเมลแล้วอัตโนมัติ — ล็อกอินได้ทันทีโดยไม่ต้องรอกดลิงก์ยืนยันในเมล สะดวกสำหรับทีมงาน
+13.7 ทดสอบ: เปิด https://<โดเมนของคุณ>/home ในหน้าต่างไม่ล็อกอิน (incognito) → ต้องถูกเด้งไป /login = ระบบกันถูกต้อง
+ง) ล็อกให้เข้าได้เฉพาะอีเมลบริษัท (ไม่บังคับ — แนะนำถ้าอยากกันคนนอก)
+เข้าใจค่าเริ่มต้นก่อน: ตามปกติระบบ ไม่ได้กรองโดเมนอีเมล — ใครก็ตามที่คุณกดเพิ่มในเมนู Users จะล็อกอินได้ทั้งหมด รวมถึง Gmail ถ้าอยากให้ "ต่อให้มีรหัสผ่าน แต่ถ้าไม่ใช่เมลบริษัทก็เข้าไม่ได้" ต้องเติมการเช็กโดเมนเองตามด้านล่าง (เปลี่ยน yourcompany.com เป็นโดเมนของคุณ)
+เช็ก 2 จุด เพื่อให้กันได้สนิท: จุดที่ 1 กันตอน "ล็อกอิน" (สำคัญสุด — กันแม้บัญชีจะถูกสร้างไปแล้ว), จุดที่ 2 กันตั้งแต่ "ตอนสร้างผู้ใช้" (กันไม่ให้เผลอเพิ่มเมลนอกโดเมนตั้งแต่แรก)
+13.8 จุดที่ 1 — กันตอนล็อกอิน: เปิดไฟล์ src/app/(app)/layout.js หาบรรทัดที่ได้ session มาแล้ว (ตรงที่เช็คว่า if (!session) router.replace("/login") ) แล้ว แทรกโค้ดนี้ต่อทันที
+คัดลอก
+// ── ล็อกเฉพาะอีเมลบริษัท ──
+const ALLOWED_DOMAIN = "yourcompany.com"; // ← เปลี่ยนเป็นโดเมนบริษัทคุณ
+const userEmail = (session.user?.email || "").toLowerCase();
+if (!userEmail.endsWith("@" + ALLOWED_DOMAIN)) {
+sb.auth.signOut(); // เตะออกจากระบบทันที
+router.replace("/login?denied=1"); // เด้งกลับหน้า login
+return;
+}
+ผลลัพธ์: ต่อให้มีคนถือรหัสผ่านของบัญชีที่ไม่ใช่โดเมนบริษัท (เช่น someone@gmail.com ) พอล็อกอินผ่าน Supabase ได้ ระบบจะ เตะออกทันที ก่อนเข้าหน้าหลังบ้าน
+13.9 จุดที่ 2 — กันตั้งแต่ตอนสร้างผู้ใช้: เปิดไฟล์ src/app/api/users/route.js ในฟังก์ชัน POST หลังบรรทัดที่เช็ค if (!email || !password) แล้ว แทรกโค้ดนี้
+คัดลอก
+// ── อนุญาตเฉพาะอีเมลบริษัท ──
+const ALLOWED_DOMAIN = "yourcompany.com"; // ← เปลี่ยนเป็นโดเมนบริษัทคุณ
+if (!email.endsWith("@" + ALLOWED_DOMAIN)) {
+return NextResponse.json(
+{ ok: false, error: "domain_not_allowed" },
+{ status: 400 }
+);
+}
+ทำให้แม้แต่แอดมินก็เพิ่มผู้ใช้ที่ไม่ใช่โดเมนบริษัทไม่ได้ → ขึ้น error domain_not_allowed แทน
+13.10 (ถ้าอยากให้ผู้ใช้เห็นเหตุผล) ที่หน้า src/app/login/page.js เพิ่มข้อความเตือนเมื่อ URL มี ?denied=1 เช่น "อนุญาตเฉพาะอีเมล @yourcompany.com เท่านั้น" ไม่บังคับ — แค่ให้ผู้ใช้รู้ว่าทำไมเข้าไม่ได้ ถ้าไม่ทำก็แค่เด้งกลับหน้า login เฉย ๆ
+13.11 ทดสอบจริง: ลองเพิ่มผู้ใช้ Gmail แล้วล็อกอิน → ต้องเข้าไม่ได้ (ถูกเตะออก) · ส่วนเมลโดเมนบริษัท → เข้าได้ปกติ = ล็อกโดเมนสำเร็จ
+ต้องแก้ทั้ง 2 จุดให้ ALLOWED_DOMAIN ตรงกัน และถ้ามีหลายโดเมนที่อนุญาต ให้เปลี่ยนเป็นลิสต์ เช่น ["yourcompany.com", "yourbrand.com"] แล้วเช็คด้วย .some(d => userEmail.endsWith("@" + d)) แทน
+14
+เปิดใช้จริง — สร้างผู้ใช้ + ทำรายงาน + ส่งลิงก์ลูกค้า คุณทำเอง
+ขั้นนี้ทำผ่านหน้าเว็บที่ deploy แล้ว · เทมเพลตจะถูกเปิดให้อัตโนมัติ
+▶
+14.1 สร้างผู้ใช้ทีมคนแรกที่ Supabase → Authentication → Users → Add user (ตั้งอีเมล + รหัสผ่านเอง)
+14.2 เปิด https://<โดเมนของคุณ>/login ล็อกอินด้วยอีเมล+รหัส → ระบบพาเข้าหน้า Home
+14.3 เมนู Sources — ตรวจว่าบัญชีที่เพิ่มแสดงครบ สถานะ active และเวลา "อัปเดตเมื่อ" ขยับ
+14.4 เมนู Reports — สร้างรายงานลูกค้า ผูกบัญชี (ใส่ได้หลายสาขา) แล้วกด เปิด dashboard
+ตรงนี้แหละที่ "เทมเพลต" ถูกใช้: พอกดเปิด dashboard ระบบจะหยิบไฟล์เทมเพลต ที่คุณสร้างไว้เองในขั้นที่ 2 ที่ตรงกับแพลตฟอร์มของบัญชี (เช่น Meta → meta-dashboard.html ) จาก public/templates/ มาแสดงในกรอบ iframe แล้วเทมเพลตจะดึงตัวเลขจริงจาก /api/metrics มาวาดเอง — ระบบเลือกไฟล์ให้อัตโนมัติตามแพลตฟอร์ม คุณไม่ต้องเลือกเอง (แต่ไฟล์เทมเพลตทั้งหมดเป็นของที่คุณออกแบบ/เขียนเอง)
+14.5 กด Save / Share → ได้ลิงก์ /r/<token> ส่งให้ลูกค้าเปิดดูได้โดยไม่ต้องล็อกอิน (อ่านอย่างเดียว)
+14.6 ลองเมนู Support Ticket สร้างเรื่องแจ้งปัญหา แล้วปรับสถานะ In Process → Done
+15
+ตรวจความปลอดภัยก่อนส่งลิงก์ให้ลูกค้า สำคัญมาก
+เช็ค 4 ข้อนี้ทุกครั้งก่อนเปิดใช้จริง
+▶
+15.1 รหัสลับทุกตัว (service_role + token แพลตฟอร์ม) อยู่แค่ใน Vercel Environment Variables — ไม่เคยโผล่ในเบราว์เซอร์หรือบน GitHub
+15.2 ไฟล์ .env.local ไม่ถูกอัปขึ้น GitHub (มีใน .gitignore แล้ว) — เข้าไปดูใน repo ให้แน่ใจว่าไม่มีไฟล์นี้
+15.3 ลองเปิด /api/sync โดย ไม่ใส่ key → ต้องได้ 401 unauthorized (แปลว่ากันคนนอกได้)
+15.4 เปิด Supabase → Advisors → Security เช็คว่าไม่มี warning เรื่อง RLS ค้าง
+ข้อควรรู้ (งานเฟสถัดไป): ตอนนี้ /api/metrics ยังเปิดให้อ่านได้โดยไม่ต้องล็อกอิน เพื่อให้ลิงก์ลูกค้าเปิดดูง่าย — ถ้าจะเปิดสาธารณะวงกว้าง ควรเพิ่มการล็อกอินคุม endpoint นี้เพิ่มก่อน
+Ads Dashboard · Go-Live Checklist · ความคืบหน้าถูกบันทึกไว้ในเบราว์เซอร์เครื่องนี้ (ปิดเปิดใหม่ก็ไม่หาย)
