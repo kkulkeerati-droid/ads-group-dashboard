@@ -14,6 +14,7 @@ Repo อยู่แล้วที่ GitHub (private) — ต่อ Vercel ใ
 
 | Key | Value | จำเป็น? |
 |---|---|---|
+| `DASHBOARD_PASSWORD` | รหัสที่จะใช้เข้าเว็บ (ตั้งเอง) | ✅✅ **ตั้งก่อนใส่ META token เสมอ** — กันคนนอกเห็นข้อมูลจริง |
 | `META_ACCESS_TOKEN` | token จาก System User (ads_read + read_insights) | ✅ เพื่อได้ข้อมูลสด |
 | `META_AD_ACCOUNTS` | id บัญชีคั่น comma (เว้นว่าง = ทุกบัญชี) | – |
 | `CRON_SECRET` | สุ่มสตริงยาว ๆ (กัน /api/sync โดนยิงมั่ว) | ถ้าใช้ Supabase |

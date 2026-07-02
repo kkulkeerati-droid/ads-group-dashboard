@@ -297,6 +297,7 @@ export default function Dashboard() {
             <button className="btn" onClick={exportCSV}>⬇︎ CSV</button>
             <button className="btn" onClick={() => window.print()}>🖨 PDF</button>
             <button className="btn" onClick={shareLink}>{copied ? "✓ คัดลอกแล้ว" : "🔗 แชร์"}</button>
+            <button className="btn" onClick={async () => { await fetch("/api/logout", { method: "POST" }); window.location.href = "/login"; }} title="ออกจากระบบ">⎋ ออก</button>
           </div>
         )}
       </header>
