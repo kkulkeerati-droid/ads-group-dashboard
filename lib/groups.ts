@@ -10,15 +10,16 @@ export interface GroupDef {
   label: string;
   keywords: string[]; // เทียบแบบ case-insensitive
   color: string;
+  target?: number; // เป้า CPR/ต้นทุนต่อผลลัพธ์ (บาท) — ใช้ไฮไลต์เขียว/แดง + ธง scale/kill
 }
 
 export const GROUPS: GroupDef[] = [
-  { key: "grd", label: "GRD", keywords: ["grd"], color: "#2563eb" },
-  { key: "ai", label: "AI", keywords: ["ai"], color: "#7c3aed" },
-  { key: "a2", label: "A2", keywords: ["a2"], color: "#0891b2" },
-  { key: "สายพาน", label: "สายพาน", keywords: ["สายพาน"], color: "#059669" },
-  { key: "ap2", label: "AP2", keywords: ["ap2"], color: "#db2777" },
-  { key: "others", label: "Others", keywords: [], color: "#64748b" },
+  { key: "grd", label: "GRD", keywords: ["grd"], color: "#2563eb", target: 60 },
+  { key: "ai", label: "AI", keywords: ["ai"], color: "#7c3aed", target: 50 },
+  { key: "a2", label: "A2", keywords: ["a2"], color: "#0891b2", target: 50 },
+  { key: "สายพาน", label: "สายพาน", keywords: ["สายพาน"], color: "#059669", target: 60 },
+  { key: "ap2", label: "AP2", keywords: ["ap2"], color: "#db2777", target: 60 },
+  { key: "others", label: "Others", keywords: [], color: "#64748b", target: 80 },
 ];
 
 export const OTHERS_KEY = "others";

@@ -33,6 +33,20 @@ export interface GroupTotal extends Metricized {
   share: number; // สัดส่วน spend 0..1
   ads: number;
   resultType?: string; // ประเภทผลลัพธ์หลักของกลุ่ม
+  target?: number; // เป้า CPR (บาท)
+}
+
+// ยอดงวดก่อนหน้า (สำหรับเทียบ %▲▼)
+export interface PrevTotals {
+  spend: number;
+  results: number;
+  reach: number;
+  impressions: number;
+  cpr: number;
+  cpm: number;
+  byGroup: Record<string, number>; // spend ต่อกลุ่ม
+  since: string;
+  until: string;
 }
 
 export interface AccountTotal extends Metricized {
@@ -75,4 +89,5 @@ export interface Metrics extends Metricized {
   series: SeriesPoint[];
   accountIssues: AccountIssue[];
   warnings: string[];
+  prev?: PrevTotals; // งวดก่อนหน้า (เทียบ)
 }

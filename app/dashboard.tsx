@@ -32,6 +32,33 @@ const fmtMetric = (v: number, money: boolean) => (money ? "฿" + nMoney(v) : nI
 
 const DEFAULT_GROUPS_JSON = JSON.stringify(GROUPS);
 
+// ─── เทียบงวด + สถานะเป้า/ธงตัดสินใจ ─────────────────────────────────
+function Delta({ cur, prev, lowerBetter }: { cur: number; prev?: number; lowerBetter?: boolean }) {
+  if (prev === undefined || prev === null || prev === 0) return null;
+  const d = (cur - prev) / prev;
+  if (!isFinite(d)) return null;
+  if (Math.abs(d) < 0.005) return <span className="delta flat">≈0%</span>;
+  const up = d > 0;
+  const good = lowerBetter ? !up : up;
+  return <span className={`delta ${good ? "good" : "bad"}`}>{up ? "▲" : "▼"}{Math.abs(d * 100).toFixed(0)}%</span>;
+}
+// สถานะ CPR เทียบเป้า → เขียว/เหลือง/แดง
+function cprStatus(cpr: number, target?: number): "good" | "warn" | "bad" | "" {
+  if (!target || !cpr) return "";
+  if (cpr <= target) return "good";
+  if (cpr > target * 1.3) return "bad";
+  return "warn";
+}
+// ธงตัดสินใจต่อ ad: 🟢 สเกล / 🔴 ปิด / 🟡 เฝ้าดู
+function adDecision(cpr: number, results: number, spend: number, target?: number): { label: string; cls: string } | null {
+  if (!target) return null;
+  if (results === 0 && spend > target) return { label: "🔴 ปิด", cls: "bad" };
+  if (!cpr) return null;
+  if (cpr <= target * 0.9 && results >= 5) return { label: "🟢 สเกล", cls: "good" };
+  if (cpr > target * 1.3) return { label: "🔴 ปิด", cls: "bad" };
+  return { label: "🟡 เฝ้าดู", cls: "warn" };
+}
+
 // ─── เรียงตาราง (คลิกหัวคอลัมน์) ─────────────────────────────────────
 type SortState = { key: string; dir: 1 | -1 };
 
@@ -83,6 +110,10 @@ export default function Dashboard() {
   const [err, setErr] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [acctFilter, setAcctFilter] = useState<string[]>([]);
+  const [acctOpen, setAcctOpen] = useState(false);
+  const [brand, setBrand] = useState<{ name?: string; logo?: string }>({});
+  const [allAccounts, setAllAccounts] = useState<{ id: string; name: string }[]>([]);
   const [accSort, setAccSort] = useState<SortState>({ key: "spend", dir: -1 });
   const [adSort, setAdSort] = useState<SortState>({ key: "spend", dir: -1 });
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -97,6 +128,11 @@ export default function Dashboard() {
     if (pr) setPreset(pr);
     if (m) setMetric(m as MetricKey);
     if (u.searchParams.get("ro") === "1") setReadOnly(true);
+    const acc = u.searchParams.get("accounts");
+    if (acc) setAcctFilter(acc.split(",").filter(Boolean));
+    const bn = u.searchParams.get("brand");
+    const lg = u.searchParams.get("logo");
+    if (bn || lg) setBrand({ name: bn || undefined, logo: lg || undefined });
     // กติกากลุ่ม: URL (ลิงก์แชร์) มาก่อน แล้วค่อย localStorage ของเครื่องนี้
     const gp = u.searchParams.get("groups");
     try {
@@ -130,6 +166,7 @@ export default function Dashboard() {
       setErr(null);
       const qs = new URLSearchParams({ platform, preset });
       if (groupsParam) qs.set("groups", groupsParam);
+      if (acctFilter.length) qs.set("accounts", acctFilter.join(","));
       const res = await fetch(`/api/metrics?${qs}`, { cache: "no-store" });
       const json = await res.json();
       if (json.error) throw new Error(json.error);
@@ -139,9 +176,14 @@ export default function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }, [platform, preset, groupsParam]);
+  }, [platform, preset, groupsParam, acctFilter]);
 
   useEffect(() => { setLoading(true); load(); }, [load]);
+
+  // จำรายชื่อบัญชีทั้งหมด (ตอนยังไม่กรอง) ไว้ให้ตัวเลือกเล่มรายงาน
+  useEffect(() => {
+    if (data && acctFilter.length === 0) setAllAccounts(data.accounts.map((a) => ({ id: a.id, name: a.name })));
+  }, [data, acctFilter.length]);
 
   useEffect(() => {
     if (timer.current) clearInterval(timer.current);
@@ -166,6 +208,9 @@ export default function Dashboard() {
     u.searchParams.set("metric", metric);
     u.searchParams.set("ro", "1");
     if (groupsParam) u.searchParams.set("groups", groupsParam); // พกกติกากลุ่มที่แก้ไปด้วย
+    if (acctFilter.length) u.searchParams.set("accounts", acctFilter.join(",")); // เล่มรายงาน = ชุดบัญชี
+    if (brand.name) u.searchParams.set("brand", brand.name);
+    if (brand.logo) u.searchParams.set("logo", brand.logo);
     navigator.clipboard.writeText(u.toString());
     setCopied(true);
     setTimeout(() => setCopied(false), 1800);
@@ -198,7 +243,8 @@ export default function Dashboard() {
       <header className="top">
         <div>
           <h1>
-            Ads Group Dashboard{" "}
+            {brand.logo ? <img className="brand-logo" src={brand.logo} alt="" /> : null}
+            {brand.name || "Ads Group Dashboard"}{" "}
             {data && <span className={`badge ${data.source}`}>{data.source.toUpperCase()}</span>}
             {readOnly && <span className="badge ro">READ-ONLY</span>}
           </h1>
@@ -223,6 +269,31 @@ export default function Dashboard() {
             <button className="btn" onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))} title="สลับธีม สว่าง/มืด">{theme === "dark" ? "☀︎" : "☾"}</button>
             <button className="btn" onClick={load}>↻</button>
             <button className="btn" onClick={() => setEditOpen((v) => !v)}>⚙︎ กลุ่ม</button>
+            <div className="acct-wrap">
+              <button className="btn" onClick={() => setAcctOpen((v) => !v)}>⛃ บัญชี{acctFilter.length ? ` (${acctFilter.length})` : ""}</button>
+              {acctOpen && (
+                <div className="acct-pop">
+                  <div className="acct-head">
+                    <strong>เล่มรายงาน — เลือกบัญชี</strong>
+                    <button className="linkbtn" onClick={() => setAcctFilter([])}>ทั้งหมด</button>
+                  </div>
+                  {(allAccounts.length ? allAccounts : (data?.accounts ?? [])).map((a) => {
+                    const on = acctFilter.length === 0 || acctFilter.includes(a.id);
+                    return (
+                      <label key={a.id} className="acct-item">
+                        <input type="checkbox" checked={on} onChange={(e) => {
+                          const full = (allAccounts.length ? allAccounts : (data?.accounts ?? [])).map((x) => x.id);
+                          const base = acctFilter.length ? acctFilter : full;
+                          const next = e.target.checked ? Array.from(new Set([...base, a.id])) : base.filter((id) => id !== a.id);
+                          setAcctFilter(next.length === full.length ? [] : next);
+                        }} />
+                        {a.name}
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
             <button className="btn" onClick={exportCSV}>⬇︎ CSV</button>
             <button className="btn" onClick={() => window.print()}>🖨 PDF</button>
             <button className="btn" onClick={shareLink}>{copied ? "✓ คัดลอกแล้ว" : "🔗 แชร์"}</button>
@@ -266,13 +337,15 @@ export default function Dashboard() {
             <div className="card" style={{ ["--c" as any]: "#3b82f6" }}>
               <div className="k">รวมทั้งหมด</div>
               <div className="v">{showVal((data as any)[metric] || 0)}</div>
-              <div className="m">{data.accounts.length} บัญชี · {mMeta.label}</div>
+              <div className="m"><Delta cur={(data as any)[metric] || 0} prev={data.prev?.[metric]} lowerBetter={mMeta.lowerBetter} /> {data.accounts.length} บัญชี · {mMeta.label}</div>
             </div>
             {groups.map((g) => (
               <div className="card" key={g.key} style={{ ["--c" as any]: g.color }}>
                 <div className="k"><span className="dot" />{g.label}</div>
-                <div className="v">{showVal(groupVal(g))}</div>
+                <div className={"v " + (metric === "cpr" ? cprStatus(g.cpr, g.target) : "")}>{showVal(groupVal(g))}</div>
                 <div className="m">
+                  {metric === "spend" && <><Delta cur={g.spend} prev={data.prev?.byGroup?.[g.key]} /> </>}
+                  {metric === "cpr" && g.target ? `เป้า ฿${g.target} · ` : ""}
                   ฿{nInt(g.spend)} · {g.ads} ads{g.resultType ? ` · ${g.resultType}` : ""}
                 </div>
               </div>
@@ -287,7 +360,7 @@ export default function Dashboard() {
                 <div className="bar-track">
                   <div className="bar-fill" style={{ width: `${(groupVal(g) / maxVal) * 100}%`, background: g.color }} />
                 </div>
-                <div className="amt">{showVal(groupVal(g))}{metric === "spend" && <span className="pct">{(g.share * 100).toFixed(1)}%</span>}</div>
+                <div className={"amt " + (metric === "cpr" ? cprStatus(g.cpr, g.target) : "")}>{showVal(groupVal(g))}{metric === "spend" && <span className="pct">{(g.share * 100).toFixed(1)}%</span>}</div>
               </div>
             ))}
           </div>
@@ -345,11 +418,13 @@ export default function Dashboard() {
                     <SortTh label="ผลลัพธ์" col="results" sort={adSort} setSort={setAdSort} />
                     <SortTh label="CPR" col="cpr" sort={adSort} setSort={setAdSort} />
                     <SortTh label="CPM" col="cpm" sort={adSort} setSort={setAdSort} />
+                    <th>แนะนำ</th>
                   </tr>
                 </thead>
                 <tbody>
                   {sortedTopAds.map((a, i) => {
                     const g = groups.find((x) => x.key === a.group);
+                    const dec = adDecision(a.cpr, a.results, a.spend, g?.target);
                     return (
                       <tr key={i}>
                         <td className="name-cell" title={a.adName}>{a.adName || "(ไม่มีชื่อ)"}</td>
@@ -357,8 +432,9 @@ export default function Dashboard() {
                         <td className="name-cell">{a.accountName}</td>
                         <td>฿{nMoney(a.spend)}</td>
                         <td>{nInt(a.results)}</td>
-                        <td>{a.cpr ? "฿" + nMoney(a.cpr) : "–"}</td>
+                        <td className={cprStatus(a.cpr, g?.target)}>{a.cpr ? "฿" + nMoney(a.cpr) : "–"}</td>
                         <td>{a.cpm ? "฿" + nMoney(a.cpm) : "–"}</td>
+                        <td>{dec ? <span className={"pill " + dec.cls}>{dec.label}</span> : "–"}</td>
                       </tr>
                     );
                   })}
@@ -458,13 +534,14 @@ function GroupEditor({ groups, onSave, onReset, onClose }: {
 
   return (
     <div className="panel editor">
-      <h2>แก้กติกากลุ่ม<span className="hint">จับจาก prefix ชื่อ ads · Others = ตัวที่ไม่เข้ากลุ่มไหน</span></h2>
+      <h2>แก้กติกากลุ่ม<span className="hint">prefix ชื่อ ads · เป้า฿ = ต้นทุนต่อผลลัพธ์ที่รับได้ (ใช้ไฮไลต์ + ธง scale/kill)</span></h2>
       {rows.map((g, i) => {
         const isOthers = g.keywords.length === 0;
         return (
           <div className="erow" key={i}>
             <input className="ein" value={g.label} onChange={(e) => upd(i, { label: e.target.value })} placeholder="ชื่อกลุ่ม" />
             <input className="ein wide" disabled={isOthers} value={g.keywords.join(", ")} onChange={(e) => upd(i, { keywords: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })} placeholder={isOthers ? "(อัตโนมัติ)" : "keyword คั่นด้วย ,"} />
+            <input className="ein tgt" type="number" min={0} value={g.target ?? ""} onChange={(e) => upd(i, { target: e.target.value ? Number(e.target.value) : undefined })} placeholder="เป้า฿" title="เป้า CPR (บาท)" />
             <input className="ecolor" type="color" value={g.color} onChange={(e) => upd(i, { color: e.target.value })} />
             {!isOthers ? <button className="btn" onClick={() => del(i)}>✕</button> : <span className="others-tag">others</span>}
           </div>

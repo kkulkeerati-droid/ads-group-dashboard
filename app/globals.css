@@ -188,6 +188,37 @@ svg.trend .endpt { stroke: var(--surface); stroke-width: 2; }
 .ecolor { width: 40px; height: 34px; padding: 2px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-2); cursor: pointer; }
 .others-tag { font-size: 11px; color: var(--muted); width: 30px; text-align: center; }
 .erow-actions { display: flex; gap: 8px; align-items: center; margin-top: 14px; }
+.ein.tgt { width: 66px; text-align: right; }
+
+/* ── semantic (เป้า/เทียบ/ธง) ─────────────────────────────────────── */
+.good { color: var(--good); }
+.warn { color: var(--warn); }
+.bad  { color: var(--bad); }
+.card .v.good, .card .v.bad, .card .v.warn { -webkit-text-fill-color: currentColor; }
+.delta { font-size: 11px; font-weight: 700; margin-right: 5px; font-variant-numeric: tabular-nums; }
+.delta.good { color: var(--good); }
+.delta.bad { color: var(--bad); }
+.delta.flat { color: var(--faint); }
+.pill { font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
+.pill.good { background: color-mix(in srgb, var(--good) 18%, transparent); color: var(--good); }
+.pill.warn { background: color-mix(in srgb, var(--warn) 20%, transparent); color: var(--warn); }
+.pill.bad  { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad); }
+td.good, td.bad, td.warn { font-weight: 700; }
+
+/* ── white-label logo ────────────────────────────────────────────── */
+.brand-logo { height: 26px; width: auto; max-width: 150px; border-radius: 6px; vertical-align: -6px; margin-right: 4px; }
+
+/* ── ตัวเลือกเล่มรายงาน (บัญชี) ───────────────────────────────────── */
+.acct-wrap { position: relative; display: inline-block; }
+.acct-pop {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 40;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: var(--shadow-hi); padding: 10px; min-width: 250px; max-height: 360px; overflow: auto;
+}
+.acct-head { display: flex; justify-content: space-between; align-items: center; font-size: 12px; margin-bottom: 8px; color: var(--muted); }
+.acct-item { display: flex; gap: 8px; align-items: center; font-size: 12.5px; padding: 6px 5px; cursor: pointer; border-radius: 7px; }
+.acct-item:hover { background: var(--surface-2); }
+.linkbtn { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 12px; font-weight: 650; }
 
 @media (max-width: 560px) {
   .bar-row { grid-template-columns: 66px 1fr 108px; }

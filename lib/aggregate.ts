@@ -7,7 +7,24 @@ import type {
   TopAd,
   SeriesPoint,
   AccountIssue,
+  PrevTotals,
 } from "./types";
+
+// สรุปยอดงวดก่อนสำหรับเทียบ (ใช้ classifier เดียวกับงวดปัจจุบัน)
+export function toPrevTotals(
+  rows: AdRow[],
+  since: string,
+  until: string,
+  groupsConfig?: GroupDef[]
+): PrevTotals {
+  const m = aggregate(rows, { source: "live", platform: "all", since, until, groupsConfig });
+  const byGroup: Record<string, number> = {};
+  for (const g of m.groups) byGroup[g.key] = g.spend;
+  return {
+    spend: m.spend, results: m.results, reach: m.reach, impressions: m.impressions,
+    cpr: m.cpr, cpm: m.cpm, byGroup, since, until,
+  };
+}
 
 interface Acc {
   spend: number;
@@ -153,6 +170,7 @@ export function aggregate(
       share: total.spend > 0 ? a.spend / total.spend : 0,
       ads: groupAds.get(g.key)!.size,
       resultType: topType,
+      target: g.target,
     };
   });
 
