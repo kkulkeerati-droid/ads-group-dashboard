@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Metrics, MetricKey } from "@/lib/types";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type CSSProperties } from "react";
+import type { Metrics, MetricKey, AccountTotal, TopAd } from "@/lib/types";
 import { GROUPS, type GroupDef } from "@/lib/groups";
 
 const PLATFORMS = [
@@ -32,6 +32,44 @@ const fmtMetric = (v: number, money: boolean) => (money ? "฿" + nMoney(v) : nI
 
 const DEFAULT_GROUPS_JSON = JSON.stringify(GROUPS);
 
+// ─── เรียงตาราง (คลิกหัวคอลัมน์) ─────────────────────────────────────
+type SortState = { key: string; dir: 1 | -1 };
+
+function sortRows<T>(rows: T[], sort: SortState, getVal: (r: T, key: string) => number | string): T[] {
+  return [...rows].sort((a, b) => {
+    const va = getVal(a, sort.key);
+    const vb = getVal(b, sort.key);
+    if (typeof va === "string" || typeof vb === "string") return sort.dir * String(va).localeCompare(String(vb), "th");
+    return sort.dir * (va - vb);
+  });
+}
+
+// คลิกคอลัมน์ใหม่ = มากไปน้อย, คลิกซ้ำ = สลับทิศ
+function SortTh({ label, col, sort, setSort, style }: {
+  label: ReactNode; col: string; sort: SortState; setSort: (s: SortState) => void; style?: CSSProperties;
+}) {
+  const active = sort.key === col;
+  const toggle = () => setSort(active ? { key: col, dir: (sort.dir * -1) as 1 | -1 } : { key: col, dir: -1 });
+  return (
+    <th className="sortable" onClick={toggle} style={style}>
+      {label}<span className="arr">{active ? (sort.dir === -1 ? " ▼" : " ▲") : ""}</span>
+    </th>
+  );
+}
+
+const accGetVal = (a: AccountTotal, key: string): number | string => {
+  if (key === "name") return a.name.toLowerCase();
+  if (key === "platform") return a.platform;
+  if (key.startsWith("g:")) return a.byGroup[key.slice(2)] || 0;
+  return (a as any)[key] ?? 0;
+};
+const adGetVal = (a: TopAd, key: string): number | string => {
+  if (key === "adName") return (a.adName || "").toLowerCase();
+  if (key === "group") return a.group;
+  if (key === "accountName") return (a.accountName || "").toLowerCase();
+  return (a as any)[key] ?? 0;
+};
+
 export default function Dashboard() {
   const [platform, setPlatform] = useState<"all" | "meta" | "tiktok">("all");
   const [preset, setPreset] = useState("last_30d");
@@ -44,6 +82,8 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [accSort, setAccSort] = useState<SortState>({ key: "spend", dir: -1 });
+  const [adSort, setAdSort] = useState<SortState>({ key: "spend", dir: -1 });
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // อ่าน state จาก URL (รองรับลิงก์แชร์) + localStorage groups
@@ -95,6 +135,9 @@ export default function Dashboard() {
   const mMeta = METRICS.find((m) => m.key === metric)!;
   const groupVal = (g: any) => (g[metric] as number) || 0;
   const maxVal = Math.max(1, ...groups.map(groupVal));
+
+  const sortedAccounts = useMemo(() => (data ? sortRows(data.accounts, accSort, accGetVal) : []), [data, accSort]);
+  const sortedTopAds = useMemo(() => (data ? sortRows(data.topAds, adSort, adGetVal) : []), [data, adSort]);
 
   const shareLink = () => {
     const u = new URL(window.location.origin + window.location.pathname);
@@ -230,18 +273,22 @@ export default function Dashboard() {
           <TrendChart data={data} groups={groups} />
 
           <div className="panel">
-            <h2>แยกรายบัญชี<span className="hint">{data.accounts.length} บัญชี · spend ต่อกลุ่ม</span></h2>
+            <h2>แยกรายบัญชี<span className="hint">{data.accounts.length} บัญชี · spend ต่อกลุ่ม · คลิกหัวคอลัมน์เพื่อเรียง</span></h2>
             <div className="tbl-scroll">
               <table>
                 <thead>
                   <tr>
-                    <th>บัญชี</th><th>แพลตฟอร์ม</th>
-                    {groups.map((g) => <th key={g.key}>{g.label}</th>)}
-                    <th>รวม</th><th>ผลลัพธ์</th><th>CPR</th><th style={{ width: 120 }}>สัดส่วน</th>
+                    <SortTh label="บัญชี" col="name" sort={accSort} setSort={setAccSort} />
+                    <SortTh label="แพลตฟอร์ม" col="platform" sort={accSort} setSort={setAccSort} />
+                    {groups.map((g) => <SortTh key={g.key} label={g.label} col={`g:${g.key}`} sort={accSort} setSort={setAccSort} />)}
+                    <SortTh label="รวม" col="spend" sort={accSort} setSort={setAccSort} />
+                    <SortTh label="ผลลัพธ์" col="results" sort={accSort} setSort={setAccSort} />
+                    <SortTh label="CPR" col="cpr" sort={accSort} setSort={setAccSort} />
+                    <th style={{ width: 120 }}>สัดส่วน</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {data.accounts.map((a) => (
+                  {sortedAccounts.map((a) => (
                     <tr key={a.platform + a.id}>
                       <td className="name-cell">{a.name}</td>
                       <td>{a.platform}</td>
@@ -264,14 +311,22 @@ export default function Dashboard() {
           </div>
 
           <div className="panel">
-            <h2>Top ads<span className="hint">25 อันดับตามค่าใช้จ่าย</span></h2>
+            <h2>Top ads<span className="hint">25 อันดับแรก (ตามค่าใช้จ่าย) · คลิกหัวคอลัมน์เพื่อเรียงภายใน 25 ตัว</span></h2>
             <div className="tbl-scroll">
               <table>
                 <thead>
-                  <tr><th>ชื่อ ads</th><th>กลุ่ม</th><th>บัญชี</th><th>spend</th><th>ผลลัพธ์</th><th>CPR</th><th>CPM</th></tr>
+                  <tr>
+                    <SortTh label="ชื่อ ads" col="adName" sort={adSort} setSort={setAdSort} />
+                    <SortTh label="กลุ่ม" col="group" sort={adSort} setSort={setAdSort} />
+                    <SortTh label="บัญชี" col="accountName" sort={adSort} setSort={setAdSort} />
+                    <SortTh label="spend" col="spend" sort={adSort} setSort={setAdSort} />
+                    <SortTh label="ผลลัพธ์" col="results" sort={adSort} setSort={setAdSort} />
+                    <SortTh label="CPR" col="cpr" sort={adSort} setSort={setAdSort} />
+                    <SortTh label="CPM" col="cpm" sort={adSort} setSort={setAdSort} />
+                  </tr>
                 </thead>
                 <tbody>
-                  {data.topAds.map((a, i) => {
+                  {sortedTopAds.map((a, i) => {
                     const g = groups.find((x) => x.key === a.group);
                     return (
                       <tr key={i}>

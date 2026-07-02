@@ -66,6 +66,9 @@ table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { text-align: right; padding: 9px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
 th:first-child, td:first-child { text-align: left; }
 th { color: var(--muted); font-weight: 600; font-size: 12px; }
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover { color: var(--text); }
+th .arr { font-size: 10px; }
 tbody tr:hover { background: var(--panel2); }
 .tag { font-size: 11px; padding: 2px 8px; border-radius: 6px; color: #fff; font-weight: 600; }
 .name-cell { max-width: 340px; overflow: hidden; text-overflow: ellipsis; }
