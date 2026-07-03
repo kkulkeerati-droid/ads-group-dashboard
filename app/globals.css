@@ -84,6 +84,12 @@ header.top .sub { color: var(--muted); font-size: 12.5px; margin-top: 3px; }
 .seg button:hover:not(.active) { color: var(--ink); }
 .seg button.active { background: var(--accent); color: #fff; box-shadow: 0 2px 8px -2px color-mix(in srgb, var(--accent) 60%, transparent); }
 .seg button:disabled { opacity: .4; cursor: not-allowed; }
+.daterange { display: inline-flex; align-items: center; gap: 6px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; padding: 3px 8px; }
+.daterange input[type="date"] { background: transparent; border: none; color: var(--ink); font-size: 12.5px; font-weight: 600; padding: 4px 2px; cursor: pointer; color-scheme: dark; font-family: inherit; }
+[data-theme="light"] .daterange input[type="date"] { color-scheme: light; }
+.daterange span { color: var(--muted); font-size: 12px; }
+.daterange .linkbtn { color: var(--muted); background: transparent; border: none; cursor: pointer; font-size: 12px; padding: 2px 4px; }
+.daterange .linkbtn:hover { color: var(--ink); }
 
 .btn {
   background: var(--surface-2); border: 1px solid var(--line); color: var(--ink);

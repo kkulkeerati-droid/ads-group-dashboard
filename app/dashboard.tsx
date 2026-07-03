@@ -12,6 +12,7 @@ const PLATFORMS = [
 
 const PRESETS = [
   { key: "today", label: "วันนี้" },
+  { key: "yesterday", label: "เมื่อวาน" },
   { key: "last_7d", label: "7 วัน" },
   { key: "last_30d", label: "30 วัน" },
   { key: "this_month", label: "เดือนนี้" },
@@ -100,6 +101,8 @@ const adGetVal = (a: TopAd, key: string): number | string => {
 export default function Dashboard() {
   const [platform, setPlatform] = useState<"all" | "meta" | "tiktok">("all");
   const [preset, setPreset] = useState("last_30d");
+  const [customSince, setCustomSince] = useState("");
+  const [customUntil, setCustomUntil] = useState("");
   const [metric, setMetric] = useState<MetricKey>("spend");
   const [auto, setAuto] = useState(false);
   const [readOnly, setReadOnly] = useState(false);
@@ -126,6 +129,9 @@ export default function Dashboard() {
     const m = u.searchParams.get("metric");
     if (p === "all" || p === "meta" || p === "tiktok") setPlatform(p);
     if (pr) setPreset(pr);
+    const qs2 = u.searchParams.get("since");
+    const qu2 = u.searchParams.get("until");
+    if (qs2 && qu2) { setCustomSince(qs2); setCustomUntil(qu2); }
     if (m) setMetric(m as MetricKey);
     if (u.searchParams.get("ro") === "1") setReadOnly(true);
     const acc = u.searchParams.get("accounts");
@@ -164,7 +170,9 @@ export default function Dashboard() {
   const load = useCallback(async () => {
     try {
       setErr(null);
-      const qs = new URLSearchParams({ platform, preset });
+      const custom = customSince && customUntil;
+      const qs = new URLSearchParams({ platform, preset: custom ? "custom" : preset });
+      if (custom) { qs.set("since", customSince); qs.set("until", customUntil); }
       if (groupsParam) qs.set("groups", groupsParam);
       if (acctFilter.length) qs.set("accounts", acctFilter.join(","));
       const res = await fetch(`/api/metrics?${qs}`, { cache: "no-store" });
@@ -176,7 +184,7 @@ export default function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }, [platform, preset, groupsParam, acctFilter]);
+  }, [platform, preset, customSince, customUntil, groupsParam, acctFilter]);
 
   useEffect(() => { setLoading(true); load(); }, [load]);
 
@@ -204,7 +212,8 @@ export default function Dashboard() {
   const shareLink = () => {
     const u = new URL(window.location.origin + window.location.pathname);
     u.searchParams.set("platform", platform);
-    u.searchParams.set("preset", preset);
+    if (customSince && customUntil) { u.searchParams.set("since", customSince); u.searchParams.set("until", customUntil); }
+    else u.searchParams.set("preset", preset);
     u.searchParams.set("metric", metric);
     u.searchParams.set("ro", "1");
     if (groupsParam) u.searchParams.set("groups", groupsParam); // พกกติกากลุ่มที่แก้ไปด้วย
@@ -265,8 +274,23 @@ export default function Dashboard() {
             </div>
             <div className="seg">
               {PRESETS.map((p) => (
-                <button key={p.key} className={preset === p.key ? "active" : ""} onClick={() => setPreset(p.key)}>{p.label}</button>
+                <button
+                  key={p.key}
+                  className={preset === p.key && !(customSince && customUntil) ? "active" : ""}
+                  onClick={() => { setPreset(p.key); setCustomSince(""); setCustomUntil(""); }}
+                >{p.label}</button>
               ))}
+            </div>
+            <div className="daterange" title="เลือกช่วงวันที่เอง">
+              <input type="date" value={customSince} max={customUntil || undefined}
+                onChange={(e) => setCustomSince(e.target.value)} />
+              <span>–</span>
+              <input type="date" value={customUntil} min={customSince || undefined}
+                onChange={(e) => setCustomUntil(e.target.value)} />
+              {(customSince || customUntil) && (
+                <button className="linkbtn" title="ล้างช่วงวันที่"
+                  onClick={() => { setCustomSince(""); setCustomUntil(""); }}>✕</button>
+              )}
             </div>
             <label className="toggle"><input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} />auto 15s</label>
             <button className="btn" onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))} title="สลับธีม สว่าง/มืด">{theme === "dark" ? "☀︎" : "☾"}</button>

@@ -27,6 +27,7 @@ function resolveRange(preset: string, qsince?: string, quntil?: string) {
   const start = new Date();
   switch (preset) {
     case "today": break;
+    case "yesterday": start.setDate(start.getDate() - 1); end.setDate(end.getDate() - 1); break;
     case "last_7d": start.setDate(start.getDate() - 6); break;
     case "this_month": start.setDate(1); break;
     case "last_30d":

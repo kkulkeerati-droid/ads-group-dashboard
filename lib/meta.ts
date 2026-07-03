@@ -21,11 +21,32 @@ interface FetchArgs {
   until: string;
 }
 
-async function gget(url: string): Promise<any> {
-  const res = await fetch(url, { cache: "no-store" });
-  const json = await res.json();
-  if (json.error) throw new Error(`Meta API: ${json.error.message} (code ${json.error.code})`);
-  return json;
+// error ชั่วคราวของ Meta ที่ retry แล้วมักหาย (service unavailable / rate limit)
+const TRANSIENT_CODES = new Set([1, 2, 4, 17, 341, 613]);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function gget(url: string, tries = 3): Promise<any> {
+  for (let attempt = 1; ; attempt++) {
+    let json: any;
+    try {
+      const res = await fetch(url, { cache: "no-store" });
+      json = await res.json();
+    } catch (netErr) {
+      // network/parse error → retry สั้น ๆ
+      if (attempt >= tries) throw netErr;
+      await sleep(400 * attempt);
+      continue;
+    }
+    if (json.error) {
+      const code = json.error.code;
+      if (TRANSIENT_CODES.has(code) && attempt < tries) {
+        await sleep(500 * attempt); // backoff 0.5s, 1s
+        continue;
+      }
+      throw new Error(`Meta API: ${json.error.message} (code ${code})`);
+    }
+    return json;
+  }
 }
 
 function extractResults(actions: any[]): { results: number; resultType?: string } {
