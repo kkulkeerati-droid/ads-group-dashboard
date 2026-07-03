@@ -11,22 +11,29 @@
 - **GitHub (private):** https://github.com/kkulkeerati-droid/ads-group-dashboard
 - **รันในเครื่อง:** `cd dashboard && npm install && npm run dev` → http://localhost:3000
 
-## 2. สถานะ deploy ตอนนี้ ⚠️ (ยังไม่ live)
-- โค้ดเสร็จ + push ขึ้น GitHub แล้ว (มีระบบล็อกรหัสด้วย)
-- **ยังไม่ได้ deploy** — เลือกวิธี **Vercel CLI + token** (deploy โค้ดในเครื่องตรงๆ)
-- **เหตุผลที่ไม่ใช้ GitHub import:** บัญชีไม่ตรง — repo อยู่ใต้ GitHub `kkulkeerati-droid` แต่ Vercel ล็อกอินเป็น `stanamaharat-5791` (GitHub `stanamaharat-crypto`)
-- **ค้างที่:** รอ **Vercel token** จาก user (สร้างที่ vercel.com/account/settings/tokens ชื่อ `deploy-ads-dashboard`, scope `stanamaharat-5791`, expiration 1 day)
+## 2. สถานะ deploy ตอนนี้ ✅ LIVE (2026-07-03)
+- **🔗 URL: https://dashboard-ten-rose-27.vercel.app** — live + ล็อกรหัส (demo mode)
+- **ล็อกรหัสแล้ว:** ตั้ง `DASHBOARD_PASSWORD` ใน Vercel prod env — รหัสอยู่กับ user (ผมสุ่มให้ครั้งแรก, user เปลี่ยนได้)
+- **Vercel account (แก้ให้ตรงแล้ว):** ล็อกอิน `kkulkeerati-8562` · team/scope `pan-s-projects15` · project `dashboard` · GitHub repo **เชื่อมกับ project แล้ว** (`vercel git connect` ผ่าน) → push main = auto-deploy ได้
+  - _(handoff เก่าเขียนว่า Vercel เป็น `stanamaharat-5791` — ไม่จริงแล้ว บัญชีตรงกับ GitHub `kkulkeerati-droid` แล้ว)_
+- **ยังเหลือ (ทำเมื่อพร้อมข้อมูลสด):** ใส่ `META_ACCESS_TOKEN` → redeploy → เว็บสลับจาก demo เป็น live เอง
 
-### ขั้นตอน deploy ที่เหลือ (ทำเมื่อได้ token)
+### ⚠️ กับดัก deploy ที่เจอจริง (Vercel Hobby: build ทีละ 1 ตัว)
+ถ้ามี deployment ค้าง status **UNKNOWN + Build `. [0ms]`** (เกิดจากเน็ต/DNS หลุดตอน CLI upload) → มัน **block คิว build** ตัวถัดไปค้างหมด. **วิธีแก้ที่ได้ผล:**
+```bash
+npx vercel ls dashboard                                   # หา deployment UNKNOWN
+npx vercel remove dashboard-<id>-...vercel.app --yes      # ลบตัวค้างทุกตัว (ปลดคิว)
+npx vercel redeploy dashboard-<good-id>-...vercel.app     # rebuild จากตัวที่ Ready (server-side, ไม่ต้อง upload)
+```
+> `vercel redeploy` (ไม่มี `--yes`) เสถียรกว่า `vercel --prod --force` ในเครื่องนี้ เพราะไม่ต้อง upload source ใหม่ (เลี่ยง DNS drop) — build ฝั่ง Vercel + auto-alias production domain ให้เลย
+
+### ใส่ META token ให้เป็น live (เมื่อพร้อม)
 ```bash
 cd "/Users/thanatos66/Downloads/Kantamaze 01 - for Content Carousel/dashboard"
-npx vercel --prod --yes --token <TOKEN>     # deploy ครั้งแรก (สร้าง project + prod)
-# ตั้ง env (สำคัญ: password ก่อน meta token เสมอ)
-npx vercel env add DASHBOARD_PASSWORD production --token <TOKEN>   # ใส่รหัสที่ user เลือก
-npx vercel env add META_ACCESS_TOKEN production --token <TOKEN>   # ถ้าพร้อมข้อมูลจริง
-npx vercel --prod --yes --token <TOKEN>     # redeploy ให้ env มีผล
+printf '%s' '<META_ACCESS_TOKEN>' | npx vercel env add META_ACCESS_TOKEN production
+npx vercel redeploy dashboard-<current-ready-id>-pan-s-projects15.vercel.app   # หา id จาก vercel ls
 ```
-> **กฎเหล็ก:** ต้องตั้ง `DASHBOARD_PASSWORD` **ก่อน** ใส่ `META_ACCESS_TOKEN` เสมอ — ไม่งั้นข้อมูลจริงจะเปิดสาธารณะช่วงหนึ่ง
+> **กฎเหล็ก:** `DASHBOARD_PASSWORD` ต้องตั้ง**ก่อน** `META_ACCESS_TOKEN` เสมอ — ตอนนี้ตั้งแล้ว ✅ จึงใส่ META token ได้ปลอดภัย
 
 ## 3. ฟีเจอร์ที่มีแล้ว (เสร็จ + verify หมด)
 - **แบ่งกลุ่มตาม prefix ชื่อ ads** (prefix + token-boundary กัน `aigen` หลุดเข้า `ai`) — แก้ใน UI ได้ (ปุ่ม ⚙︎ กลุ่ม, เก็บ localStorage)
