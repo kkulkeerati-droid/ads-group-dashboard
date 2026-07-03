@@ -14,8 +14,9 @@
 ## 2. สถานะ deploy ตอนนี้ ✅ LIVE (2026-07-03)
 - **🔗 URL: https://dashboard-ten-rose-27.vercel.app** — live + ล็อกรหัส (demo mode)
 - **ล็อกรหัสแล้ว:** ตั้ง `DASHBOARD_PASSWORD` ใน Vercel prod env — รหัสอยู่กับ user (ผมสุ่มให้ครั้งแรก, user เปลี่ยนได้)
-- **Vercel account (แก้ให้ตรงแล้ว):** ล็อกอิน `kkulkeerati-8562` · team/scope `pan-s-projects15` · project `dashboard` · GitHub repo **เชื่อมกับ project แล้ว** (`vercel git connect` ผ่าน) → push main = auto-deploy ได้
-  - _(handoff เก่าเขียนว่า Vercel เป็น `stanamaharat-5791` — ไม่จริงแล้ว บัญชีตรงกับ GitHub `kkulkeerati-droid` แล้ว)_
+- **Vercel account (แก้ให้ตรงแล้ว):** ล็อกอิน `kkulkeerati-8562` · team/scope `pan-s-projects15` · project `dashboard`
+  - _(handoff เก่าเขียนว่า Vercel เป็น `stanamaharat-5791` — ไม่จริงแล้ว)_
+- **⛔ git auto-deploy ใช้ไม่ได้ (ตัดออกแล้ว):** ลอง `vercel git connect` + push แล้ว Vercel สร้าง deployment แต่ **build ไม่รัน ค้าง UNKNOWN ไม่มี log** (น่าจะ clone repo `kkulkeerati-droid` ไม่ได้ permission). เลย `vercel git disconnect` ทิ้ง. **วิธี deploy ที่เวิร์คจริง = `vercel redeploy <ready-id>`** (ดูข้างล่าง)
 - **ยังเหลือ (ทำเมื่อพร้อมข้อมูลสด):** ใส่ `META_ACCESS_TOKEN` → redeploy → เว็บสลับจาก demo เป็น live เอง
 
 ### ⚠️ กับดัก deploy ที่เจอจริง (Vercel Hobby: build ทีละ 1 ตัว)
