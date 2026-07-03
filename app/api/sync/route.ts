@@ -36,9 +36,12 @@ async function handle(req: NextRequest) {
   }
 
   // sync ย้อนหลัง N วัน (ครอบข้อมูลที่ยัง settle ไม่นิ่ง)
+  // — หรือระบุช่วงเองผ่าน ?since=YYYY-MM-DD&until=YYYY-MM-DD สำหรับ backfill ย้อนหลังเป็นก้อน ๆ
   const days = parseInt(process.env.SYNC_DAYS || "7", 10);
-  const since = isoDaysAgo(days);
-  const until = isoDaysAgo(0);
+  const qSince = req.nextUrl.searchParams.get("since");
+  const qUntil = req.nextUrl.searchParams.get("until");
+  const since = qSince || isoDaysAgo(days);
+  const until = qUntil || isoDaysAgo(0);
 
   const metaToken = process.env.META_ACCESS_TOKEN;
   const ttToken = process.env.TIKTOK_ACCESS_TOKEN;

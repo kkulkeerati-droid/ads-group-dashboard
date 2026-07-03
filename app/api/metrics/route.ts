@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchMetaAds } from "@/lib/meta";
 import { fetchTikTokAds } from "@/lib/tiktok";
-import { supabaseEnabled, readRows } from "@/lib/supabase";
+import { supabaseEnabled, readRows, earliestDate } from "@/lib/supabase";
 import { aggregate, buildDemoSeries, toPrevTotals } from "@/lib/aggregate";
 import { parseGroupsParam } from "@/lib/groups";
 import type { AdRow, AccountIssue } from "@/lib/types";
@@ -63,16 +63,22 @@ export async function GET(req: NextRequest) {
   const warnings: string[] = [];
 
   // ── ชั้น 1: Supabase ──
+  // ใช้ cache เฉพาะเมื่อ "ครอบช่วงที่ขอครบ" (วันเก่าสุดใน cache ≤ since)
+  // ไม่งั้นตกไป live — กันโชว์ข้อมูลไม่ครบว่าเป็นยอดทั้งช่วง
   if (supabaseEnabled()) {
     try {
-      const rows = filterAcc(await readRows(platform, since, until));
-      if (rows.length > 0) {
-        const prevRows = filterAcc(await readRows(platform, prevSince, prevUntil));
-        const m = aggregate(rows, { source: "supabase", platform, since, until, groupsConfig, warnings });
-        m.prev = toPrevTotals(prevRows, prevSince, prevUntil, groupsConfig);
-        return NextResponse.json(m);
+      const earliest = await earliestDate(platform);
+      if (earliest !== null && earliest <= since) {
+        const rows = filterAcc(await readRows(platform, since, until));
+        if (rows.length > 0) {
+          const prevRows = filterAcc(await readRows(platform, prevSince, prevUntil));
+          const m = aggregate(rows, { source: "supabase", platform, since, until, groupsConfig, warnings });
+          m.prev = toPrevTotals(prevRows, prevSince, prevUntil, groupsConfig);
+          return NextResponse.json(m);
+        }
+      } else if (earliest !== null) {
+        warnings.push(`Supabase cache ย้อนถึงแค่ ${earliest} — ช่วงนี้ยังไม่ครบ ดึงสดแทน (รอ backfill/cron)`);
       }
-      warnings.push("Supabase ยังไม่มีข้อมูลในช่วงนี้ — รอ cron sync หรือยิง /api/sync");
     } catch (e: any) {
       warnings.push("อ่าน Supabase ไม่ได้: " + (e.message || e));
     }

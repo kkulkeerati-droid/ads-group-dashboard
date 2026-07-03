@@ -61,6 +61,18 @@ export async function upsertRows(rows: AdRow[]): Promise<number> {
   return n;
 }
 
+// วันเก่าสุดที่มีใน cache — ใช้เช็คว่า cache ครอบช่วงที่ขอครบไหม (กันโชว์ข้อมูลไม่ครบ)
+export async function earliestDate(
+  platform: "meta" | "tiktok" | "all"
+): Promise<string | null> {
+  if (!supabaseEnabled()) return null;
+  let q = `${TABLE}?select=date&date=not.is.null&order=date.asc&limit=1`;
+  if (platform !== "all") q += `&platform=eq.${platform}`;
+  const res = await sb(q, { method: "GET" });
+  const data = (await res.json()) as any[];
+  return data[0]?.date || null;
+}
+
 // อ่านข้อมูลช่วงวันที่ (สำหรับ /api/metrics โหมด supabase)
 export async function readRows(
   platform: "meta" | "tiktok" | "all",
