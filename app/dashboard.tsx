@@ -251,6 +251,9 @@ export default function Dashboard() {
           <div className="sub">
             ค่าโฆษณาแบ่งตามกลุ่มชื่อ ads · {groupsCfg.map((g) => g.label).join(" / ")}
             {data && <> · {data.since} → {data.until}</>}
+            {data?.source === "demo" && (
+              <span className="warn-inline"> · demo: ช่วงเวลายังคงที่ (ปรับได้จริงตอน LIVE)</span>
+            )}
           </div>
         </div>
         {!readOnly && (

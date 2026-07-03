@@ -69,6 +69,7 @@ header.top {
 }
 header.top h1 { font-size: 19px; margin: 0; font-weight: 750; letter-spacing: -.2px; display: flex; align-items: center; gap: 8px; }
 header.top .sub { color: var(--muted); font-size: 12.5px; margin-top: 3px; }
+.warn-inline { color: var(--warn); font-weight: 600; }
 
 .badge { font-size: 10.5px; padding: 3px 9px; border-radius: 999px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; }
 .badge.live { background: color-mix(in srgb, var(--good) 20%, transparent); color: var(--good); }
