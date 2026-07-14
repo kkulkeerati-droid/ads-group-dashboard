@@ -99,7 +99,7 @@ data/snapshot.json         ข้อมูล demo จริง (แค่ 3 บ
 - **Demo มีแค่ 3 บัญชี** — พอ live จะดึงครบทุกบัญชีเอง (เล่มรายงานจะเห็นครบ)
 - **ปุ่มช่วงเวลา (วันนี้/7วัน/…) ในโหมด demo ไม่เปลี่ยนเลข** เพราะ snapshot คงที่ ไม่มีวันที่จริง — live ทำงานจริงทุกปุ่ม (มีโน้ตกำกับแล้ว)
 - **CPR เทียบข้ามกลุ่มตรงๆ ไม่ได้เป๊ะ** — objective ต่างกัน (DrX=messaging/ทัก, P-FLOW=interactions, บางตัว=ซื้อ) การ์ดโชว์ประเภทกำกับ
-- **Live โหลดช้าเมื่อบัญชีเยอะ** (ดึงทุกบัญชีสดตอนเปิดหน้า) → เปิด Supabase เพื่อ cache
+- **✅ Supabase cache เปิดแล้ว (2026-07-14):** project `ads-dashboard-cache` (Supabase acc = GitHub `stanamaharat-crypto`, region Mumbai, URL `ehcwqikwwnqnusejtbbh.supabase.co`) · env ครบใน Vercel (SUPABASE_URL / SERVICE_ROLE_KEY / CRON_SECRET) · backfill ครบ 16 พ.ค.–ปัจจุบัน · ผลจริง: 30วัน 4s, 7วัน 3s (จาก 504/31s) · **กฎ: ช่วง "วันนี้ล้วน" ดึงสดเสมอ (realtime), ช่วงอื่น cache** · cron Vercel รายวัน 8 โมงไทย sync ย้อน 7 วัน · backfill เพิ่ม: `/api/sync?key=<CRON_SECRET>&since=&until=` ก้อนละ ≤4 วัน (เกินแล้ว timeout) · **กับดัก:** ads ชื่อซ้ำในบัญชีเดียว → upsertRows รวมแถวก่อนส่ง (แก้แล้ว) · DB password อยู่กับ user (ไม่ได้ใช้ ใช้ service_role key แทน) · อยากได้ intraday fresh ทุกช่วง → สมัคร cron-job.org ยิง sync ทุก 15 นาที (ออปชัน)
 - **Vercel Hobby ฟรี แต่ห้ามใช้เชิงพาณิชย์** ตาม license — ถ้าเก็บเงินลูกค้าค่อยขยับ Pro (~$20/mo) หรือย้าย Netlify (ฟรี)
 - **Vercel Hobby จำกัด cron วันละ 1 ครั้ง** — `vercel.json` ตั้งไว้รายวัน (`0 1 * * *` = ตี 8 ไทย) แล้ว ห้ามตั้งถี่กว่านี้ไม่งั้น deploy fail · ถ้าอยาก sync ถี่ (เช่นทุก 5 นาที) ใช้ cron-job.org ยิง `/api/sync?key=<CRON_SECRET>` แทน
 - **Verify แล้ว (2026-07-03):** `tsc --noEmit` ผ่าน + `next build` ผ่าน — โค้ดพร้อม deploy ทันทีที่ได้ token
