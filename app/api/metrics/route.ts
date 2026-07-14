@@ -66,7 +66,10 @@ export async function GET(req: NextRequest) {
   // ── ชั้น 1: Supabase ──
   // ใช้ cache เฉพาะเมื่อ "ครอบช่วงที่ขอครบ" (วันเก่าสุดใน cache ≤ since)
   // ไม่งั้นตกไป live — กันโชว์ข้อมูลไม่ครบว่าเป็นยอดทั้งช่วง
-  if (supabaseEnabled()) {
+  // ยกเว้น: ช่วงที่เป็น "วันนี้ล้วน" (today) ให้ดึงสดเสมอ — cache อัปเดตตาม cron ไม่ realtime
+  const todayISO = new Date().toISOString().slice(0, 10);
+  const rangeIsTodayOnly = since >= todayISO;
+  if (supabaseEnabled() && !rangeIsTodayOnly) {
     try {
       const earliest = await earliestDate(platform);
       if (earliest !== null && earliest <= since) {
