@@ -12,7 +12,7 @@
 - **รันในเครื่อง:** `cd dashboard && npm install && npm run dev` → http://localhost:3000
 
 ## 2. สถานะ deploy ตอนนี้ ✅ LIVE (2026-07-03)
-- **🔗 URL: https://dashboard-ten-rose-27.vercel.app** — live + ล็อกรหัส (demo mode)
+- **🔗 URL: https://dashboard-ads-thanatos.vercel.app** — live + ล็อกรหัส (demo mode)
 - **ล็อกรหัสแล้ว:** ตั้ง `DASHBOARD_PASSWORD` ใน Vercel prod env — รหัสอยู่กับ user (ผมสุ่มให้ครั้งแรก, user เปลี่ยนได้)
 - **Vercel account (แก้ให้ตรงแล้ว):** ล็อกอิน `kkulkeerati-8562` · team/scope `pan-s-projects15` · project `dashboard`
   - _(handoff เก่าเขียนว่า Vercel เป็น `stanamaharat-5791` — ไม่จริงแล้ว)_
