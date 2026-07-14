@@ -8,3 +8,11 @@ export async function tokenFor(password: string): Promise<string> {
   const buf = await crypto.subtle.digest("SHA-256", data);
   return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
+
+// signed share link: sig คนละค่ากับ cookie (ให้ลูกค้าเปิดดูได้โดยไม่รู้รหัส)
+// เปลี่ยนรหัสเมื่อไหร่ ลิงก์เก่าตายทันที
+export async function shareTokenFor(password: string): Promise<string> {
+  const data = new TextEncoder().encode("adsshare::" + password);
+  const buf = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}

@@ -209,7 +209,7 @@ export default function Dashboard() {
   const sortedAccounts = useMemo(() => (data ? sortRows(data.accounts, accSort, accGetVal) : []), [data, accSort]);
   const sortedTopAds = useMemo(() => (data ? sortRows(data.topAds, adSort, adGetVal) : []), [data, adSort]);
 
-  const shareLink = () => {
+  const shareLink = async () => {
     const u = new URL(window.location.origin + window.location.pathname);
     u.searchParams.set("platform", platform);
     if (customSince && customUntil) { u.searchParams.set("since", customSince); u.searchParams.set("until", customUntil); }
@@ -220,6 +220,11 @@ export default function Dashboard() {
     if (acctFilter.length) u.searchParams.set("accounts", acctFilter.join(",")); // เล่มรายงาน = ชุดบัญชี
     if (brand.name) u.searchParams.set("brand", brand.name);
     if (brand.logo) u.searchParams.set("logo", brand.logo);
+    // แนบ signed sig — คนรับเปิดได้เลยไม่ต้องรู้รหัส (เปลี่ยนรหัส = ลิงก์เก่าตาย)
+    try {
+      const { share } = await fetch("/api/share").then((r) => r.json());
+      if (share) u.searchParams.set("share", share);
+    } catch { /* ไม่มี sig ก็แชร์แบบต้องใส่รหัสได้ */ }
     navigator.clipboard.writeText(u.toString());
     setCopied(true);
     setTimeout(() => setCopied(false), 1800);
@@ -361,6 +366,37 @@ export default function Dashboard() {
         <div className="loading">กำลังโหลด…</div>
       ) : data ? (
         <>
+          {/* 🎯 สรุปคำแนะนำอัตโนมัติ — แปลตัวเลขเป็นคำสั่ง ปิด/สเกล */}
+          {(() => {
+            const recs = data.topAds
+              .map((a) => {
+                const g = data.groups.find((x) => x.key === a.group);
+                return { a, g, dec: adDecision(a.cpr, a.results, a.spend, g?.target) };
+              })
+              .filter((r) => r.dec);
+            const why = (r: (typeof recs)[0]) =>
+              r.a.results === 0
+                ? `฿${nMoney(r.a.spend)} ยังไม่มีผลลัพธ์`
+                : `CPR ฿${nMoney(r.a.cpr)}${r.g?.target ? ` เป้า ฿${r.g.target}` : ""}`;
+            const close = recs.filter((r) => r.dec!.cls === "bad").sort((x, y) => y.a.spend - x.a.spend).slice(0, 3);
+            const scale = recs.filter((r) => r.dec!.cls === "good").sort((x, y) => x.a.cpr - y.a.cpr).slice(0, 3);
+            if (!close.length && !scale.length) return null;
+            return (
+              <div className="reco-bar">
+                <span className="reco-title">🎯 แนะนำ</span>
+                {close.map((r, i) => (
+                  <span className="reco pill bad" key={"c" + i} title={`${r.a.adName} · ${r.a.accountName}`}>
+                    🔴 ปิด <b>{r.a.adName || "(ไม่มีชื่อ)"}</b> <small>{why(r)}</small>
+                  </span>
+                ))}
+                {scale.map((r, i) => (
+                  <span className="reco pill good" key={"s" + i} title={`${r.a.adName} · ${r.a.accountName}`}>
+                    🟢 สเกล <b>{r.a.adName || "(ไม่มีชื่อ)"}</b> <small>{why(r)}</small>
+                  </span>
+                ))}
+              </div>
+            );
+          })()}
           <div className="cards">
             <div className="card" style={{ ["--c" as any]: "#3b82f6" }}>
               <div className="k">รวมทั้งหมด</div>
