@@ -19,20 +19,26 @@
 - **⛔ git auto-deploy ใช้ไม่ได้ (ตัดออกแล้ว):** ลอง `vercel git connect` + push แล้ว Vercel สร้าง deployment แต่ **build ไม่รัน ค้าง UNKNOWN ไม่มี log** (น่าจะ clone repo `kkulkeerati-droid` ไม่ได้ permission). เลย `vercel git disconnect` ทิ้ง. **วิธี deploy ที่เวิร์คจริง = `vercel redeploy <ready-id>`** (ดูข้างล่าง)
 - **ยังเหลือ (ทำเมื่อพร้อมข้อมูลสด):** ใส่ `META_ACCESS_TOKEN` → redeploy → เว็บสลับจาก demo เป็น live เอง
 
-### ⚠️ กับดัก deploy ที่เจอจริง (Vercel Hobby: build ทีละ 1 ตัว)
-ถ้ามี deployment ค้าง status **UNKNOWN + Build `. [0ms]`** (เกิดจากเน็ต/DNS หลุดตอน CLI upload) → มัน **block คิว build** ตัวถัดไปค้างหมด. **วิธีแก้ที่ได้ผล:**
+### 🚀 วิธี deploy ที่ใช้ได้จริง (ทางเดียว — อัปเดต 2026-07-14)
 ```bash
-npx vercel ls dashboard                                   # หา deployment UNKNOWN
-npx vercel remove dashboard-<id>-...vercel.app --yes      # ลบตัวค้างทุกตัว (ปลดคิว)
-npx vercel redeploy dashboard-<good-id>-...vercel.app     # rebuild จากตัวที่ Ready (server-side, ไม่ต้อง upload)
+cd dashboard && node scripts/deploy-api.mjs
 ```
-> `vercel redeploy` (ไม่มี `--yes`) เสถียรกว่า `vercel --prod --force` ในเครื่องนี้ เพราะไม่ต้อง upload source ใหม่ (เลี่ยง DNS drop) — build ฝั่ง Vercel + auto-alias production domain ให้เลย
+ยิง Vercel REST API ตรง แนบไฟล์ base64 ใน request เดียว → build วิ่ง ~1 นาที + auto-alias production ให้เอง
+
+### ⛔ วิธีที่พังถาวร — ห้ามเสียเวลาลองซ้ำ (พิสูจน์แล้ว 2026-07-03 → 07-14)
+ทุกวิธีข้างล่างสร้าง deployment ได้แต่ **build ไม่เคยรัน** (status UNKNOWN, Builds `. [0ms]`, ไม่มี log, รอ 11 วันก็ไม่หาย, ลบตัวค้างแล้วก็ไม่หาย, project ใหม่ก็เป็น):
+- `vercel --prod` / `--force` (CLI upload)
+- `vercel deploy --prebuilt` (ค้างตอน upload)
+- git auto-deploy (`vercel git connect` + push)
+- `vercel redeploy <stuck-id>` → error "can not be redeployed"
+
+ที่เคยใช้ได้: `vercel redeploy <Ready-id>` (แต่ reuse โค้ดเก่า — ส่งโค้ดใหม่ไม่ได้) · deployment แรกสุดของ project
 
 ### ใส่ META token ให้เป็น live (เมื่อพร้อม)
 ```bash
 cd "/Users/thanatos66/Downloads/Kantamaze 01 - for Content Carousel/dashboard"
 printf '%s' '<META_ACCESS_TOKEN>' | npx vercel env add META_ACCESS_TOKEN production
-npx vercel redeploy dashboard-<current-ready-id>-pan-s-projects15.vercel.app   # หา id จาก vercel ls
+node scripts/deploy-api.mjs   # deploy วิธีเดียวที่ใช้ได้
 ```
 > **กฎเหล็ก:** `DASHBOARD_PASSWORD` ต้องตั้ง**ก่อน** `META_ACCESS_TOKEN` เสมอ — ตอนนี้ตั้งแล้ว ✅ จึงใส่ META token ได้ปลอดภัย
 
