@@ -35,7 +35,7 @@ async function sb(path: string, init: RequestInit) {
 // เขียนทับข้อมูลรายวัน (upsert ตาม unique key platform+account+ad+date)
 export async function upsertRows(rows: AdRow[]): Promise<number> {
   if (!supabaseEnabled() || rows.length === 0) return 0;
-  const payload = rows.map((r) => ({
+  const mapped = rows.map((r) => ({
     platform: r.platform,
     account_id: r.accountId,
     account_name: r.accountName,
@@ -47,6 +47,18 @@ export async function upsertRows(rows: AdRow[]): Promise<number> {
     results: r.results,
     result_type: r.resultType || null,
   }));
+  // รวมแถวที่ชน unique key กันเองใน batch — ads คนละตัวแต่ชื่อซ้ำ (จากการ duplicate ad)
+  // ไม่งั้น Postgres error 21000: ON CONFLICT cannot affect row a second time
+  const byKey = new Map<string, (typeof mapped)[0]>();
+  for (const p of mapped) {
+    const k = `${p.platform}|${p.account_id}|${p.ad_name}|${p.date}`;
+    const ex = byKey.get(k);
+    if (ex) {
+      ex.spend += p.spend; ex.impressions += p.impressions;
+      ex.reach += p.reach; ex.results += p.results;
+    } else byKey.set(k, { ...p });
+  }
+  const payload = [...byKey.values()];
   // แบ่งเป็นก้อนละ 500
   let n = 0;
   for (let i = 0; i < payload.length; i += 500) {
