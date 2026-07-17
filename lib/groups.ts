@@ -11,15 +11,21 @@ export interface GroupDef {
   keywords: string[]; // เทียบแบบ case-insensitive
   color: string;
   target?: number; // เป้า CPR/ต้นทุนต่อผลลัพธ์ (บาท) — ใช้ไฮไลต์เขียว/แดง + ธง scale/kill
+  roasTarget?: number; // เป้า ROAS (ยิ่งมากยิ่งดี) — ใช้ไฮไลต์เขียว/แดงตอนดูเมตริก ROAS
 }
 
+// ─── สินค้า = prefix ชื่อ ads (ตั้งตามที่ user กำหนด) ────────────────
+//   ai  = เพจ 1 Click Ultra        a2  = เพจ 1 Click All Post
+//   สายพาน + rerun = สินค้า Rerun   ap2 = สินค้า GPT
+//   (grd = อาหารเสริม, others = ที่เหลือ — เก็บไว้ไม่ให้ยอดหาย)
+// เป้า฿ = CPR ที่รับได้ (ต้นทุนต่อผลลัพธ์/ต่อทัก) · roasTarget = ROAS เป้า (ยิ่งมากยิ่งดี)
 export const GROUPS: GroupDef[] = [
-  { key: "grd", label: "GRD", keywords: ["grd"], color: "#2563eb", target: 60 },
-  { key: "ai", label: "AI", keywords: ["ai"], color: "#7c3aed", target: 50 },
-  { key: "a2", label: "A2", keywords: ["a2"], color: "#0891b2", target: 50 },
-  { key: "สายพาน", label: "สายพาน", keywords: ["สายพาน"], color: "#059669", target: 60 },
-  { key: "ap2", label: "AP2", keywords: ["ap2"], color: "#db2777", target: 60 },
-  { key: "others", label: "Others", keywords: [], color: "#64748b", target: 80 },
+  { key: "ai", label: "AI · 1 Click Ultra", keywords: ["ai"], color: "#7c3aed", target: 50, roasTarget: 3 },
+  { key: "a2", label: "A2 · 1 Click All Post", keywords: ["a2"], color: "#0891b2", target: 50, roasTarget: 3 },
+  { key: "สายพาน", label: "Rerun · สายพาน", keywords: ["สายพาน", "rerun"], color: "#059669", target: 60, roasTarget: 3 },
+  { key: "ap2", label: "AP2 · GPT", keywords: ["ap2"], color: "#db2777", target: 60, roasTarget: 3 },
+  { key: "grd", label: "GRD · อาหารเสริม", keywords: ["grd", "urd"], color: "#2563eb", target: 60, roasTarget: 2 },
+  { key: "others", label: "อื่นๆ", keywords: [], color: "#64748b", target: 80, roasTarget: 3 },
 ];
 
 export const OTHERS_KEY = "others";

@@ -58,6 +58,26 @@ function extractResults(actions: any[]): { results: number; resultType?: string 
   return { results: 0 };
 }
 
+// มูลค่าซื้อจาก pixel (action_values) — ใช้ omni_purchase ก่อน แล้ว purchase
+function extractRevenue(actionValues: any[]): number {
+  if (!Array.isArray(actionValues)) return 0;
+  for (const match of ["omni_purchase", "purchase"]) {
+    const hit = actionValues.find((a) => (a.action_type || "") === match || (a.action_type || "").includes(match));
+    if (hit) return parseFloat(hit.value || "0") || 0;
+  }
+  return 0;
+}
+
+// จำนวนซื้อจาก pixel (actions) — omni_purchase ก่อน แล้ว purchase
+function extractPurchases(actions: any[]): number {
+  if (!Array.isArray(actions)) return 0;
+  for (const match of ["omni_purchase", "purchase"]) {
+    const hit = actions.find((a) => (a.action_type || "") === match || (a.action_type || "").includes(match));
+    if (hit) return Math.round(parseFloat(hit.value || "0")) || 0;
+  }
+  return 0;
+}
+
 export interface MetaResult {
   rows: AdRow[];
   issues: AccountIssue[];
@@ -110,7 +130,7 @@ async function fetchAccountAds(
   const timeRange = encodeURIComponent(JSON.stringify({ since, until }));
   let url =
     `${GRAPH}/act_${accountId}/insights` +
-    `?level=ad&fields=ad_name,spend,impressions,reach,actions&time_increment=1` +
+    `?level=ad&fields=ad_name,spend,impressions,reach,actions,action_values&time_increment=1` +
     `&time_range=${timeRange}&limit=500&access_token=${token}`;
   while (url) {
     const json = await gget(url);
@@ -125,6 +145,8 @@ async function fetchAccountAds(
         impressions: parseInt(r.impressions || "0", 10) || 0,
         reach: parseInt(r.reach || "0", 10) || 0,
         results,
+        revenue: extractRevenue(r.action_values),
+        purchases: extractPurchases(r.actions),
         resultType,
         date: r.date_start,
       });

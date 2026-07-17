@@ -2,6 +2,15 @@
 
 > อ่านไฟล์นี้ก่อนทำต่อ · อัปเดตล่าสุด: 2026-07-03
 
+## 🆕 อัปเดต 2026-07-17 (branch `feat/product-roas-split`)
+- **โค้ดในเครื่องย้ายมาที่ `/Users/thanatos66/Desktop/ads-group-dashboard`** (clone ใหม่จาก GitHub · path เก่าใน Downloads เลิกใช้)
+- **กลุ่มสินค้าใหม่ตามที่ user กำหนด** (`lib/groups.ts`): ai=1 Click Ultra · a2=1 Click All Post · **สายพาน+rerun รวมเป็นกลุ่มเดียว "Rerun"** (เพิ่ม keyword `rerun`) · ap2=GPT · grd+urd · others. label เป็นชื่อสินค้าจริง
+- **ช่วงเวลาครบ 8 ปุ่ม**: วันนี้/เมื่อวาน/3/7/14/30วัน/เดือนนี้/เดือนที่แล้ว (เพิ่ม last_3d, last_14d, last_month ใน `resolveRange` + UI)
+- **เพิ่ม ROAS (pixel) ทั้ง pipeline**: `meta.ts` ดึง `action_values`+`actions` → `revenue`/`purchases` ต่อ ad → `aggregate` คิด `roas=revenue/spend` → การ์ด/บาร์/ตาราง (คอลัมน์ ROAS) + เมตริก ROAS/ยอดขาย(Meta) สลับได้ + ไฮไลต์เขียว/เหลือง/แดงเทียบ `roasTarget` (เป้า 3.0)
+- **เผื่อ ROAS จริง (phase 2)**: `types` มี `realRevenue/realRoas`, `aggregate` รับ `realSales` param, migration `0002_revenue.sql` มีตาราง `product_sales_daily` (ยอดขายจริงต่อสินค้าต่อวัน) — ยังไม่ได้ต่อ UI กรอก/route อ่าน (ทำต่อ)
+- **⚠️ ก่อน deploy ตัวนี้ทับ prod ต้อง**: (1) รัน `supabase/migrations/0002_revenue.sql` ใน Supabase prod ก่อน (ไม่งั้น `/api/sync` insert คอลัมน์ revenue/purchases ไม่ได้) (2) มี `META_ACCESS_TOKEN` ใน Vercel ถึงจะเห็นข้อมูลสด (ตอนนี้ยัง demo) (3) hourly realtime = ตั้ง cron-job.org ยิง `/api/sync?key=<CRON_SECRET>` ทุก 1 ชม.
+- verify แล้ว: `tsc --noEmit` ผ่าน + รัน demo (port 3007) เห็นกลุ่ม/ROAS/8ช่วงครบ
+
 ## 1. โปรเจกต์นี้คืออะไร
 เว็บ dashboard รวมค่าโฆษณา **Meta (+ TikTok เตรียมไว้) ทุก ad account** แล้วแบ่งตาม **prefix ชื่อ ads**:
 `grd` · `ai` · `a2` · `สายพาน` · `ap2` · `others` (others = ที่ไม่เข้ากลุ่มไหน)

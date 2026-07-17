@@ -22,7 +22,7 @@ export function toPrevTotals(
   for (const g of m.groups) byGroup[g.key] = g.spend;
   return {
     spend: m.spend, results: m.results, reach: m.reach, impressions: m.impressions,
-    cpr: m.cpr, cpm: m.cpm, byGroup, since, until,
+    cpr: m.cpr, cpm: m.cpm, revenue: m.revenue, roas: m.roas, byGroup, since, until,
   };
 }
 
@@ -31,14 +31,19 @@ interface Acc {
   impressions: number;
   reach: number;
   results: number;
+  revenue: number;
+  purchases: number;
 }
-const zero = (): Acc => ({ spend: 0, impressions: 0, reach: 0, results: 0 });
+const zero = (): Acc => ({ spend: 0, impressions: 0, reach: 0, results: 0, revenue: 0, purchases: 0 });
 
 function cpm(a: Acc) {
   return a.impressions > 0 ? (a.spend / a.impressions) * 1000 : 0;
 }
 function cpr(a: Acc) {
   return a.results > 0 ? a.spend / a.results : 0;
+}
+function roas(a: Acc) {
+  return a.spend > 0 ? a.revenue / a.spend : 0;
 }
 
 export function aggregate(
@@ -53,9 +58,11 @@ export function aggregate(
     warnings?: string[];
     accountIssues?: AccountIssue[];
     demoSeries?: SeriesPoint[];
+    realSales?: Record<string, number>; // ยอดขายจริงต่อกลุ่ม (key → บาท) สำหรับ ROAS จริง
   }
 ): Metrics {
   const { classify, groups: groupDefs } = buildClassifier(opts.groupsConfig);
+  const realSales = opts.realSales || {};
 
   const groupAcc = new Map<string, Acc>();
   const groupAds = new Map<string, Set<string>>();
@@ -83,6 +90,8 @@ export function aggregate(
     ga.impressions += r.impressions;
     ga.reach += r.reach;
     ga.results += r.results;
+    ga.revenue += r.revenue || 0;
+    ga.purchases += r.purchases || 0;
     groupAds.get(key)!.add(`${r.accountId}::${r.adName}`);
     if (r.resultType) {
       const rt = groupResultType.get(key)!;
@@ -92,6 +101,8 @@ export function aggregate(
     total.impressions += r.impressions;
     total.reach += r.reach;
     total.results += r.results;
+    total.revenue += r.revenue || 0;
+    total.purchases += r.purchases || 0;
 
     // per account
     const accKey = `${r.platform}:${r.accountId}`;
@@ -109,6 +120,9 @@ export function aggregate(
         results: 0,
         cpm: 0,
         cpr: 0,
+        revenue: 0,
+        purchases: 0,
+        roas: 0,
       };
       accounts.set(accKey, acc);
     }
@@ -116,6 +130,8 @@ export function aggregate(
     acc._acc.impressions += r.impressions;
     acc._acc.reach += r.reach;
     acc._acc.results += r.results;
+    acc._acc.revenue += r.revenue || 0;
+    acc._acc.purchases += r.purchases || 0;
     acc.byGroup[key] = (acc.byGroup[key] || 0) + r.spend;
 
     // series (live: มี date)
@@ -144,6 +160,9 @@ export function aggregate(
         results: 0,
         cpm: 0,
         cpr: 0,
+        revenue: 0,
+        purchases: 0,
+        roas: 0,
       };
       adMap.set(adKey, ad);
     }
@@ -151,12 +170,15 @@ export function aggregate(
     ad._acc.impressions += r.impressions;
     ad._acc.reach += r.reach;
     ad._acc.results += r.results;
+    ad._acc.revenue += r.revenue || 0;
+    ad._acc.purchases += r.purchases || 0;
   }
 
   const groups: GroupTotal[] = groupDefs.map((g) => {
     const a = groupAcc.get(g.key)!;
     const rt = groupResultType.get(g.key)!;
     const topType = [...rt.entries()].sort((x, y) => y[1] - x[1])[0]?.[0];
+    const rev = realSales[g.key] != null ? realSales[g.key] : undefined;
     return {
       key: g.key,
       label: g.label,
@@ -167,10 +189,16 @@ export function aggregate(
       results: a.results,
       cpm: round2(cpm(a)),
       cpr: round2(cpr(a)),
+      revenue: round2(a.revenue),
+      purchases: a.purchases,
+      roas: round2(roas(a)),
       share: total.spend > 0 ? a.spend / total.spend : 0,
       ads: groupAds.get(g.key)!.size,
       resultType: topType,
       target: g.target,
+      roasTarget: g.roasTarget,
+      realRevenue: rev,
+      realRoas: rev != null && a.spend > 0 ? round2(rev / a.spend) : undefined,
     };
   });
 
@@ -203,6 +231,9 @@ export function aggregate(
     results: total.results,
     cpm: round2(cpm(total)),
     cpr: round2(cpr(total)),
+    revenue: round2(total.revenue),
+    purchases: total.purchases,
+    roas: round2(roas(total)),
     groups,
     accounts: accountList,
     topAds,
@@ -222,6 +253,9 @@ function finalizeMetric<T extends { _acc?: Acc }>(obj: T, a: Acc): any {
     results: a.results,
     cpm: round2(cpm(a)),
     cpr: round2(cpr(a)),
+    revenue: round2(a.revenue),
+    purchases: a.purchases,
+    roas: round2(roas(a)),
   };
 }
 

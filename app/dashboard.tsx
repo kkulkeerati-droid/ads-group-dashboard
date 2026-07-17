@@ -13,19 +13,25 @@ const PLATFORMS = [
 const PRESETS = [
   { key: "today", label: "วันนี้" },
   { key: "yesterday", label: "เมื่อวาน" },
+  { key: "last_3d", label: "3 วัน" },
   { key: "last_7d", label: "7 วัน" },
+  { key: "last_14d", label: "14 วัน" },
   { key: "last_30d", label: "30 วัน" },
   { key: "this_month", label: "เดือนนี้" },
+  { key: "last_month", label: "เดือนที่แล้ว" },
 ];
 
-const METRICS: { key: MetricKey; label: string; money: boolean; lowerBetter?: boolean }[] = [
+const METRICS: { key: MetricKey; label: string; money: boolean; lowerBetter?: boolean; higherBetter?: boolean; ratio?: boolean }[] = [
   { key: "spend", label: "ค่าใช้จ่าย", money: true },
+  { key: "roas", label: "ROAS", money: false, higherBetter: true, ratio: true },
+  { key: "revenue", label: "ยอดขาย (Meta)", money: true, higherBetter: true },
   { key: "results", label: "ผลลัพธ์/ทัก", money: false },
   { key: "cpr", label: "ต้นทุน/ผลลัพธ์", money: true, lowerBetter: true },
   { key: "cpm", label: "CPM", money: true, lowerBetter: true },
   { key: "reach", label: "Reach", money: false },
   { key: "impressions", label: "Impressions", money: false },
 ];
+const fmtRoas = (v: number) => (v || 0).toFixed(2) + "x";
 
 const nInt = (n: number) => (n || 0).toLocaleString("th-TH", { maximumFractionDigits: 0 });
 const nMoney = (n: number) => (n || 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -49,6 +55,14 @@ function cprStatus(cpr: number, target?: number): "good" | "warn" | "bad" | "" {
   if (cpr <= target) return "good";
   if (cpr > target * 1.3) return "bad";
   return "warn";
+}
+// สถานะ ROAS เทียบเป้า (ยิ่งมากยิ่งดี) → เขียว≥เป้า / เหลือง≥60% เป้า / แดง
+function roasStatus(roas: number, target?: number): "good" | "warn" | "bad" | "" {
+  const t = target || 3;
+  if (!roas) return "";
+  if (roas >= t) return "good";
+  if (roas >= t * 0.6) return "warn";
+  return "bad";
 }
 // ธงตัดสินใจต่อ ad: 🟢 สเกล / 🔴 ปิด / 🟡 เฝ้าดู
 function adDecision(cpr: number, results: number, spend: number, target?: number): { label: string; cls: string } | null {
@@ -203,8 +217,14 @@ export default function Dashboard() {
   const mMeta = METRICS.find((m) => m.key === metric)!;
   const groupVal = (g: any) => (g[metric] as number) || 0;
   const maxVal = Math.max(1, ...groups.map(groupVal));
-  // เมตริก "ยิ่งน้อยยิ่งดี" (CPR/CPM) ที่เป็น 0 = ไม่มีข้อมูล → โชว์ "–"
-  const showVal = (v: number) => (mMeta.lowerBetter && !v ? "–" : fmtMetric(v, mMeta.money));
+  // เมตริกที่วัดคุณภาพ (CPR/CPM/ROAS/ยอดขาย) ถ้าเป็น 0 = ไม่มีข้อมูล → โชว์ "–"
+  const showVal = (v: number) => {
+    if ((mMeta.lowerBetter || mMeta.higherBetter) && !v) return "–";
+    return mMeta.ratio ? fmtRoas(v) : fmtMetric(v, mMeta.money);
+  };
+  // สีสถานะของค่าเมตริกปัจจุบันต่อกลุ่ม (ใช้กับการ์ด + บาร์)
+  const valStatus = (g: any) =>
+    metric === "cpr" ? cprStatus(g.cpr, g.target) : metric === "roas" ? roasStatus(g.roas, g.roasTarget) : "";
 
   const sortedAccounts = useMemo(() => (data ? sortRows(data.accounts, accSort, accGetVal) : []), [data, accSort]);
   const sortedTopAds = useMemo(() => (data ? sortRows(data.topAds, adSort, adGetVal) : []), [data, adSort]);
@@ -400,17 +420,20 @@ export default function Dashboard() {
           <div className="cards">
             <div className="card" style={{ ["--c" as any]: "#3b82f6" }}>
               <div className="k">รวมทั้งหมด</div>
-              <div className="v">{showVal((data as any)[metric] || 0)}</div>
-              <div className="m"><Delta cur={(data as any)[metric] || 0} prev={data.prev?.[metric]} lowerBetter={mMeta.lowerBetter} /> {data.accounts.length} บัญชี · {mMeta.label}</div>
+              <div className={"v " + (metric === "roas" ? roasStatus((data as any).roas) : "")}>{showVal((data as any)[metric] || 0)}</div>
+              <div className="m"><Delta cur={(data as any)[metric] || 0} prev={data.prev?.[metric]} lowerBetter={mMeta.lowerBetter} /> {data.accounts.length} บัญชี · {mMeta.label}{data.roas > 0 && metric !== "roas" ? ` · ROAS ${fmtRoas(data.roas)}` : ""}</div>
             </div>
             {groups.map((g) => (
               <div className="card" key={g.key} style={{ ["--c" as any]: g.color }}>
                 <div className="k"><span className="dot" />{g.label}</div>
-                <div className={"v " + (metric === "cpr" ? cprStatus(g.cpr, g.target) : "")}>{showVal(groupVal(g))}</div>
+                <div className={"v " + valStatus(g)}>{showVal(groupVal(g))}</div>
                 <div className="m">
                   {metric === "spend" && <><Delta cur={g.spend} prev={data.prev?.byGroup?.[g.key]} /> </>}
                   {metric === "cpr" && g.target ? `เป้า ฿${g.target} · ` : ""}
+                  {metric === "roas" && g.roasTarget ? `เป้า ${g.roasTarget}x · ` : ""}
                   ฿{nInt(g.spend)} · {g.ads} ads{g.resultType ? ` · ${g.resultType}` : ""}
+                  {g.roas > 0 && metric !== "roas" ? ` · ROAS ${fmtRoas(g.roas)}` : ""}
+                  {g.realRoas ? ` · จริง ${fmtRoas(g.realRoas)}` : ""}
                 </div>
               </div>
             ))}
@@ -424,7 +447,7 @@ export default function Dashboard() {
                 <div className="bar-track">
                   <div className="bar-fill" style={{ width: `${(groupVal(g) / maxVal) * 100}%`, background: g.color }} />
                 </div>
-                <div className={"amt " + (metric === "cpr" ? cprStatus(g.cpr, g.target) : "")}>{showVal(groupVal(g))}{metric === "spend" && <span className="pct">{(g.share * 100).toFixed(1)}%</span>}</div>
+                <div className={"amt " + valStatus(g)}>{showVal(groupVal(g))}{metric === "spend" && <span className="pct">{(g.share * 100).toFixed(1)}%</span>}</div>
               </div>
             ))}
           </div>
@@ -443,6 +466,7 @@ export default function Dashboard() {
                     <SortTh label="รวม" col="spend" sort={accSort} setSort={setAccSort} />
                     <SortTh label="ผลลัพธ์" col="results" sort={accSort} setSort={setAccSort} />
                     <SortTh label="CPR" col="cpr" sort={accSort} setSort={setAccSort} />
+                    <SortTh label="ROAS" col="roas" sort={accSort} setSort={setAccSort} />
                     <th style={{ width: 120 }}>สัดส่วน</th>
                   </tr>
                 </thead>
@@ -455,6 +479,7 @@ export default function Dashboard() {
                       <td><strong>฿{nInt(a.spend)}</strong></td>
                       <td>{nInt(a.results)}</td>
                       <td>{a.cpr ? "฿" + nMoney(a.cpr) : "–"}</td>
+                      <td className={roasStatus(a.roas)}>{a.roas ? fmtRoas(a.roas) : "–"}</td>
                       <td>
                         <div className="stack">
                           {groups.map((g) => a.byGroup[g.key] > 0 ? (
@@ -482,6 +507,7 @@ export default function Dashboard() {
                     <SortTh label="ผลลัพธ์" col="results" sort={adSort} setSort={setAdSort} />
                     <SortTh label="CPR" col="cpr" sort={adSort} setSort={setAdSort} />
                     <SortTh label="CPM" col="cpm" sort={adSort} setSort={setAdSort} />
+                    <SortTh label="ROAS" col="roas" sort={adSort} setSort={setAdSort} />
                     <th>แนะนำ</th>
                   </tr>
                 </thead>
@@ -498,6 +524,7 @@ export default function Dashboard() {
                         <td>{nInt(a.results)}</td>
                         <td className={cprStatus(a.cpr, g?.target)}>{a.cpr ? "฿" + nMoney(a.cpr) : "–"}</td>
                         <td>{a.cpm ? "฿" + nMoney(a.cpm) : "–"}</td>
+                        <td className={roasStatus(a.roas, g?.roasTarget)}>{a.roas ? fmtRoas(a.roas) : "–"}</td>
                         <td>{dec ? <span className={"pill " + dec.cls}>{dec.label}</span> : "–"}</td>
                       </tr>
                     );

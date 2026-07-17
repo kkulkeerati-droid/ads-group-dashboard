@@ -28,8 +28,16 @@ function resolveRange(preset: string, qsince?: string, quntil?: string) {
   switch (preset) {
     case "today": break;
     case "yesterday": start.setDate(start.getDate() - 1); end.setDate(end.getDate() - 1); break;
+    case "last_3d": start.setDate(start.getDate() - 2); break;
     case "last_7d": start.setDate(start.getDate() - 6); break;
+    case "last_14d": start.setDate(start.getDate() - 13); break;
     case "this_month": start.setDate(1); break;
+    case "last_month": {
+      const y = end.getFullYear(), mo = end.getMonth();
+      start.setFullYear(y, mo - 1, 1);   // วันแรกของเดือนก่อน (เดือน -1 wrap ปีให้เอง)
+      end.setFullYear(y, mo, 0);         // วัน 0 ของเดือนนี้ = วันสุดท้ายเดือนก่อน
+      break;
+    }
     case "last_30d":
     default: start.setDate(start.getDate() - 29); break;
   }

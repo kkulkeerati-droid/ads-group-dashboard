@@ -45,6 +45,8 @@ export async function upsertRows(rows: AdRow[]): Promise<number> {
     impressions: r.impressions,
     reach: r.reach,
     results: r.results,
+    revenue: r.revenue || 0,
+    purchases: r.purchases || 0,
     result_type: r.resultType || null,
   }));
   // รวมแถวที่ชน unique key กันเองใน batch — ads คนละตัวแต่ชื่อซ้ำ (จากการ duplicate ad)
@@ -56,6 +58,7 @@ export async function upsertRows(rows: AdRow[]): Promise<number> {
     if (ex) {
       ex.spend += p.spend; ex.impressions += p.impressions;
       ex.reach += p.reach; ex.results += p.results;
+      ex.revenue += p.revenue; ex.purchases += p.purchases;
     } else byKey.set(k, { ...p });
   }
   const payload = [...byKey.values()];
@@ -105,6 +108,8 @@ export async function readRows(
     impressions: Number(d.impressions) || 0,
     reach: Number(d.reach) || 0,
     results: Number(d.results) || 0,
+    revenue: Number(d.revenue) || 0,
+    purchases: Number(d.purchases) || 0,
     resultType: d.result_type || undefined,
     date: d.date || undefined,
   }));
