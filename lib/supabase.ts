@@ -76,6 +76,40 @@ export async function upsertRows(rows: AdRow[]): Promise<number> {
   return n;
 }
 
+// ─── ยอดขายจริงต่อสินค้า (สำหรับ ROAS จริง — ปิดการขายในแชท/COD นอก pixel) ──
+const SALES_TABLE = "product_sales_daily";
+
+// รวมยอดขายจริงต่อกลุ่มสินค้าในช่วงวันที่ (key → บาท)
+export async function readSalesByGroup(since: string, until: string): Promise<Record<string, number>> {
+  if (!supabaseEnabled()) return {};
+  const q = `${SALES_TABLE}?select=group_key,sales&date=gte.${since}&date=lte.${until}&limit=50000`;
+  const res = await sb(q, { method: "GET" });
+  const data = (await res.json()) as any[];
+  const out: Record<string, number> = {};
+  for (const r of data) out[r.group_key] = (out[r.group_key] || 0) + (Number(r.sales) || 0);
+  return out;
+}
+
+// บันทึกยอดขายจริง (upsert ตาม platform+group+วัน)
+export async function upsertSales(
+  rows: { date: string; groupKey: string; sales: number; platform?: string; note?: string }[]
+): Promise<number> {
+  if (!supabaseEnabled() || rows.length === 0) return 0;
+  const payload = rows.map((r) => ({
+    platform: r.platform || "all",
+    group_key: r.groupKey,
+    date: r.date,
+    sales: r.sales,
+    note: r.note || null,
+  }));
+  await sb(`${SALES_TABLE}?on_conflict=platform,group_key,date`, {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify(payload),
+  });
+  return payload.length;
+}
+
 // วันเก่าสุดที่มีใน cache — ใช้เช็คว่า cache ครอบช่วงที่ขอครบไหม (กันโชว์ข้อมูลไม่ครบ)
 export async function earliestDate(
   platform: "meta" | "tiktok" | "all"

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchMetaAds } from "@/lib/meta";
 import { fetchTikTokAds } from "@/lib/tiktok";
-import { supabaseEnabled, readRows, earliestDate } from "@/lib/supabase";
+import { supabaseEnabled, readRows, earliestDate, readSalesByGroup } from "@/lib/supabase";
 import { aggregate, buildDemoSeries, toPrevTotals } from "@/lib/aggregate";
 import { parseGroupsParam } from "@/lib/groups";
 import type { AdRow, AccountIssue } from "@/lib/types";
@@ -65,6 +65,12 @@ export async function GET(req: NextRequest) {
   const prevUntil = addDays(since, -1);
   const prevSince = addDays(prevUntil, -(len - 1));
 
+  // ยอดขายจริงต่อกลุ่ม (ถ้าทีมกรอกไว้ + เปิด Supabase) — ใช้คิด ROAS จริง
+  let realSales: Record<string, number> = {};
+  if (supabaseEnabled()) {
+    try { realSales = await readSalesByGroup(since, until); } catch { /* ไม่มีก็ข้าม */ }
+  }
+
   const metaToken = process.env.META_ACCESS_TOKEN;
   const ttToken = process.env.TIKTOK_ACCESS_TOKEN;
   const wantMeta = platform === "all" || platform === "meta";
@@ -84,7 +90,7 @@ export async function GET(req: NextRequest) {
         const rows = filterAcc(await readRows(platform, since, until));
         if (rows.length > 0) {
           const prevRows = filterAcc(await readRows(platform, prevSince, prevUntil));
-          const m = aggregate(rows, { source: "supabase", platform, since, until, groupsConfig, warnings });
+          const m = aggregate(rows, { source: "supabase", platform, since, until, groupsConfig, warnings, realSales });
           m.prev = toPrevTotals(prevRows, prevSince, prevUntil, groupsConfig);
           return NextResponse.json(m);
         }
@@ -120,7 +126,7 @@ export async function GET(req: NextRequest) {
     }
     const rows = filterAcc(all.filter((r) => r.date && r.date >= since));
     const prevRows = filterAcc(all.filter((r) => r.date && r.date < since && r.date >= prevSince));
-    const m = aggregate(rows, { source: "live", platform, since, until, groupsConfig, warnings, accountIssues });
+    const m = aggregate(rows, { source: "live", platform, since, until, groupsConfig, warnings, accountIssues, realSales });
     m.prev = toPrevTotals(prevRows, prevSince, prevUntil, groupsConfig);
     return NextResponse.json(m);
   }
@@ -130,7 +136,7 @@ export async function GET(req: NextRequest) {
   warnings.push("โหมด DEMO — ใส่ META_ACCESS_TOKEN (หรือ Supabase) ใน .env.local เพื่อดึงข้อมูลสด");
   const metrics = aggregate(baseRows, {
     source: "demo", platform, since: snapshot.since, until: snapshot.until,
-    currency: snapshot.currency, groupsConfig, warnings,
+    currency: snapshot.currency, groupsConfig, warnings, realSales,
     accountIssues: snapshot.accountIssues as AccountIssue[],
   });
   // demo trend + งวดก่อน (สังเคราะห์แบบคงที่)

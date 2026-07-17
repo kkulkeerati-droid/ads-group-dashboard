@@ -122,6 +122,7 @@ export default function Dashboard() {
   const [readOnly, setReadOnly] = useState(false);
   const [groupsCfg, setGroupsCfg] = useState<GroupDef[]>(GROUPS);
   const [editOpen, setEditOpen] = useState(false);
+  const [salesOpen, setSalesOpen] = useState(false);
   const [data, setData] = useState<Metrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -321,6 +322,7 @@ export default function Dashboard() {
             <button className="btn" onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))} title="สลับธีม สว่าง/มืด">{theme === "dark" ? "☀︎" : "☾"}</button>
             <button className="btn" onClick={load}>↻</button>
             <button className="btn" onClick={() => setEditOpen((v) => !v)}>⚙︎ กลุ่ม</button>
+            <button className="btn" onClick={() => setSalesOpen(true)} title="กรอกยอดขายจริง (แชท/COD) → คิด ROAS จริง">💰 ยอดขายจริง</button>
             <div className="acct-wrap">
               <button className="btn" onClick={() => setAcctOpen((v) => !v)}>⛃ บัญชี{acctFilter.length ? ` (${acctFilter.length})` : ""}</button>
               {acctOpen && (
@@ -361,6 +363,10 @@ export default function Dashboard() {
           onReset={() => { setGroupsCfg(GROUPS); localStorage.removeItem("ads-groups"); setEditOpen(false); }}
           onClose={() => setEditOpen(false)}
         />
+      )}
+
+      {!readOnly && salesOpen && (
+        <SalesEditor groups={groupsCfg} onClose={() => setSalesOpen(false)} onSaved={() => { setSalesOpen(false); load(); }} />
       )}
 
       {/* เลือกเมตริกที่จะโชว์บนการ์ด/บาร์ */}
@@ -609,6 +615,81 @@ function TrendChart({ data, groups }: { data: Metrics; groups: any[] }) {
           <span key={g.key} className="leg"><span className="dot" style={{ background: g.color }} />{g.label}</span>
         ))}
         <span className="leg-dates">{series[0]?.date} → {series[series.length - 1]?.date}</span>
+      </div>
+    </div>
+  );
+}
+
+// ─── กรอกยอดขายจริงต่อสินค้า (→ ROAS จริง) ──────────────────────────
+function localTodayISO(): string {
+  const d = new Date();
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
+
+function SalesEditor({ groups, onClose, onSaved }: {
+  groups: GroupDef[]; onClose: () => void; onSaved: () => void;
+}) {
+  const editable = groups.filter((g) => g.keywords.length > 0); // ข้าม others
+  const [date, setDate] = useState(localTodayISO());
+  const [vals, setVals] = useState<Record<string, string>>({});
+  const [msg, setMsg] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  // prefill จากยอดที่เคยกรอกไว้ของวันนั้น
+  useEffect(() => {
+    let alive = true;
+    setMsg(null);
+    fetch(`/api/sales?since=${date}&until=${date}`)
+      .then((r) => r.json())
+      .then((j) => {
+        if (!alive) return;
+        if (j.enabled === false) setMsg("⚠️ ยังไม่ได้เปิด Supabase — กรอกดูได้ แต่จะเก็บถาวร/แชร์ทีมไม่ได้จนกว่าจะตั้ง SUPABASE_URL + SERVICE_ROLE_KEY");
+        const bg: Record<string, number> = j.byGroup || {};
+        const next: Record<string, string> = {};
+        for (const k of Object.keys(bg)) next[k] = String(bg[k]);
+        setVals(next);
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [date]);
+
+  const save = async () => {
+    setSaving(true); setMsg(null);
+    const entries: Record<string, number> = {};
+    for (const g of editable) {
+      const v = vals[g.key];
+      if (v !== undefined && v !== "") entries[g.key] = Number(v);
+    }
+    try {
+      const res = await fetch("/api/sales", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date, entries }),
+      });
+      const j = await res.json();
+      if (!j.ok) { setMsg("❌ " + (j.error || "บันทึกไม่ได้")); setSaving(false); return; }
+      onSaved();
+    } catch (e: any) { setMsg("❌ " + (e.message || String(e))); setSaving(false); }
+  };
+
+  return (
+    <div className="panel editor">
+      <h2>💰 กรอกยอดขายจริงต่อสินค้า<span className="hint">ยอดปิดจริง (แชท/COD) ต่อวัน → ใช้คิด ROAS จริง เทียบค่าแอด · บันทึกต่อวัน ช่วงเวลาจะรวมให้เอง</span></h2>
+      <div className="erow">
+        <span className="others-tag">วันที่</span>
+        <input className="ein" type="date" value={date} max={localTodayISO()} onChange={(e) => setDate(e.target.value)} />
+      </div>
+      {editable.map((g) => (
+        <div className="erow" key={g.key}>
+          <span className="ein" style={{ borderLeft: `4px solid ${g.color}` }}>{g.label}</span>
+          <input className="ein wide" type="number" min={0} inputMode="decimal" placeholder="ยอดขายจริงวันนี้ (บาท)"
+            value={vals[g.key] ?? ""} onChange={(e) => setVals((v) => ({ ...v, [g.key]: e.target.value }))} />
+        </div>
+      ))}
+      {msg && <div className="warn">{msg}</div>}
+      <div className="erow-actions">
+        <div style={{ flex: 1 }} />
+        <button className="btn" onClick={onClose}>ยกเลิก</button>
+        <button className="btn primary" onClick={save} disabled={saving}>{saving ? "กำลังบันทึก…" : "บันทึกยอดขาย"}</button>
       </div>
     </div>
   );
