@@ -469,6 +469,42 @@ export default function Dashboard() {
             </div>
           </div>
 
+          {/* 🎨 วิเคราะห์ Content Ads — มุมคอนเทนต์ × กลุ่มเป้าหมาย (แกะจากชื่อแอด) */}
+          {data.content && (data.content.themes.length > 1 || data.content.audiences.length > 1) && (
+            <div className="panel">
+              <h2>🎨 Content Ads<span className="hint">แกะจากชื่อแอด — มุมไหน/กลุ่มไหนค่าทักถูก · เทียบค่าเฉลี่ยรวม ฿{nMoney(data.cpr)}</span></h2>
+              <div className="content-grid">
+                {([["มุมคอนเทนต์", data.content.themes], ["กลุ่มเป้าหมาย", data.content.audiences]] as const).map(([title, dims]) => (
+                  <div key={title}>
+                    <div className="content-sub">{title}</div>
+                    <table className="mini">
+                      <thead><tr><th>{title}</th><th>spend</th><th>ทัก</th><th>ค่าทัก</th><th></th></tr></thead>
+                      <tbody>
+                        {dims.map((t) => {
+                          const vs = data.cpr ? t.cpr / data.cpr : 1;
+                          const cls = !t.cpr ? "" : vs <= 0.8 ? "good" : vs >= 1.3 ? "bad" : "warn";
+                          const tag = !t.cpr ? "–" : vs <= 0.8 ? "🟢 อัดต่อ" : vs >= 1.3 ? "🔴 แพง" : "🟡 กลางๆ";
+                          return (
+                            <tr key={t.key}>
+                              <td className="name-cell">{t.key} <small className="hint">({t.ads} ads)</small></td>
+                              <td>฿{nInt(t.spend)}</td>
+                              <td>{nInt(t.results)}</td>
+                              <td>{t.cpr ? "฿" + nMoney(t.cpr) : "–"}</td>
+                              <td><span className={"pill " + cls}>{tag}</span></td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 💰 ตัวเลขธุรกิจจริง — กรอกยอดขายช่วงนี้ → %Ads / ROAS / basket / ปิดการขาย */}
+          <BizPanel spend={data.spend} results={data.results} since={data.since} until={data.until} readOnly={readOnly} />
+
           <div className="panel">
             <h2>Top ads<span className="hint">25 อันดับแรก (ตามค่าใช้จ่าย) · คลิกหัวคอลัมน์เพื่อเรียงภายใน 25 ตัว</span></h2>
             <div className="tbl-scroll">
@@ -510,6 +546,56 @@ export default function Dashboard() {
           <div className="updated">อัปเดตล่าสุด: {new Date(data.updatedAt).toLocaleString("th-TH")}{auto && " · auto-refresh 15s"}{data.source === "demo" && " · (เทรนด์ = demo)"}</div>
         </>
       ) : null}
+    </div>
+  );
+}
+
+// ─── 💰 ตัวเลขธุรกิจจริง (%Ads / ROAS Inbox) ─────────────────────────
+// ค่าทักถูกยังไม่พอ — ต้องรู้ %ค่าแอดเทียบยอดขาย + ปิดการขาย ถึงรู้ว่ากำไรจริง
+// กรอกยอดขาย+ออเดอร์ของช่วงที่ดู (จาก CRM/LINE) → เก็บ localStorage ต่อช่วง
+function BizPanel({ spend, results, since, until, readOnly }: { spend: number; results: number; since: string; until: string; readOnly: boolean }) {
+  const storeKey = `biz:${since}:${until}`;
+  const [rev, setRev] = useState("");
+  const [orders, setOrders] = useState("");
+  useEffect(() => {
+    try {
+      const s = JSON.parse(localStorage.getItem(storeKey) || "{}");
+      setRev(s.rev || ""); setOrders(s.orders || "");
+    } catch { setRev(""); setOrders(""); }
+  }, [storeKey]);
+  const save = (r: string, o: string) => {
+    setRev(r); setOrders(o);
+    try { localStorage.setItem(storeKey, JSON.stringify({ rev: r, orders: o })); } catch {}
+  };
+  const revN = parseFloat(rev) || 0;
+  const ordN = parseInt(orders) || 0;
+  const pctAds = revN > 0 ? (spend / revN) * 100 : 0;
+  const roas = revN > 0 && spend > 0 ? revN / spend : 0;
+  const basket = ordN > 0 ? revN / ordN : 0;
+  const close = ordN > 0 && results > 0 ? (ordN / results) * 100 : 0;
+  const pctCls = pctAds === 0 ? "" : pctAds <= 25 ? "good" : pctAds <= 40 ? "warn" : "bad";
+  const closeCls = close === 0 ? "" : close >= 35 ? "good" : close >= 20 ? "warn" : "bad";
+  return (
+    <div className="panel">
+      <h2>💰 ธุรกิจจริง<span className="hint">%ค่า Ads เทียบยอดขาย — ค่าทักถูกแต่ %Ads เกิน 100 = ขาดทุน · กรอกยอดจาก CRM ของช่วง {since} → {until}</span></h2>
+      <div className="biz-row">
+        {!readOnly && (
+          <div className="biz-inputs">
+            <label>ยอดขายช่วงนี้ (฿)
+              <input inputMode="decimal" placeholder="เช่น 150000" value={rev} onChange={(e) => save(e.target.value, orders)} />
+            </label>
+            <label>จำนวนออเดอร์
+              <input inputMode="numeric" placeholder="เช่น 180" value={orders} onChange={(e) => save(rev, e.target.value)} />
+            </label>
+          </div>
+        )}
+        <div className="biz-stats">
+          <div className={"biz-stat " + pctCls}><div className="k">% ค่า Ads</div><div className="v">{revN ? pctAds.toFixed(1) + "%" : "–"}</div><small>เป้า ≤25%</small></div>
+          <div className="biz-stat"><div className="k">ROAS Inbox</div><div className="v">{roas ? roas.toFixed(2) : "–"}</div><small>ยอดขาย ÷ ค่าแอด</small></div>
+          <div className="biz-stat"><div className="k">Basket size</div><div className="v">{basket ? "฿" + nInt(basket) : "–"}</div><small>ยอด ÷ ออเดอร์</small></div>
+          <div className={"biz-stat " + closeCls}><div className="k">% ปิดการขาย</div><div className="v">{close ? close.toFixed(1) + "%" : "–"}</div><small>ออเดอร์ ÷ ทัก {nInt(results)}</small></div>
+        </div>
+      </div>
     </div>
   );
 }

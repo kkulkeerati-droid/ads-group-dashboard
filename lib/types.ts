@@ -69,6 +69,15 @@ export interface SeriesPoint {
   demo?: boolean;
 }
 
+// มิติวิเคราะห์ content ads (แกะจากชื่อแอด) — มุมคอนเทนต์ / กลุ่มเป้าหมาย
+export interface ContentDim {
+  key: string;
+  spend: number;
+  results: number;
+  cpr: number;
+  ads: number; // จำนวนแอดในมิตินี้
+}
+
 export interface AccountIssue {
   id: string;
   name: string;
@@ -90,4 +99,5 @@ export interface Metrics extends Metricized {
   accountIssues: AccountIssue[];
   warnings: string[];
   prev?: PrevTotals; // งวดก่อนหน้า (เทียบ)
+  content?: { themes: ContentDim[]; audiences: ContentDim[] }; // วิเคราะห์ content ads
 }

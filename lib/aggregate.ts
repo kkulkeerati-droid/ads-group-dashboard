@@ -1,4 +1,6 @@
 import { buildClassifier, type GroupDef } from "./groups";
+import { parseAudience, parseTheme } from "./content";
+import type { ContentDim } from "./types";
 import type {
   AdRow,
   Metrics,
@@ -190,7 +192,32 @@ export function aggregate(
   // demo: ไม่มี date จริง → ใช้ series ที่ generate มา (ติดธง demo)
   if (series.length === 0 && opts.demoSeries) series = opts.demoSeries;
 
+  // ── วิเคราะห์ content ads (มุมคอนเทนต์ / กลุ่มเป้าหมาย จากชื่อแอด) ──
+  // นับต่อ "แอด" ไม่ใช่ต่อแถวรายวัน → ต้อง dedupe ชื่อก่อนนับ ads
+  const themeAcc = new Map<string, Acc & { names: Set<string> }>();
+  const audAcc = new Map<string, Acc & { names: Set<string> }>();
+  for (const r of rows) {
+    if (!r.adName) continue;
+    for (const [map, key] of [
+      [themeAcc, parseTheme(r.adName)],
+      [audAcc, parseAudience(r.adName)],
+    ] as const) {
+      let a = map.get(key);
+      if (!a) { a = { ...zero(), names: new Set() }; map.set(key, a); }
+      a.spend += r.spend; a.impressions += r.impressions;
+      a.reach += r.reach; a.results += r.results;
+      a.names.add(r.adName);
+    }
+  }
+  const toDims = (m: Map<string, Acc & { names: Set<string> }>): ContentDim[] =>
+    [...m.entries()]
+      .map(([key, a]) => ({ key, spend: round2(a.spend), results: a.results, cpr: round2(cpr(a)), ads: a.names.size }))
+      .filter((d) => d.spend > 0)
+      .sort((x, y) => y.spend - x.spend);
+  const content = { themes: toDims(themeAcc), audiences: toDims(audAcc) };
+
   return {
+    content,
     source: opts.source,
     platform: opts.platform,
     since: opts.since,
