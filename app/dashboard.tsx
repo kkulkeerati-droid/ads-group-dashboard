@@ -386,12 +386,12 @@ export default function Dashboard() {
                 <span className="reco-title">🎯 แนะนำ</span>
                 {close.map((r, i) => (
                   <span className="reco pill bad" key={"c" + i} title={`${r.a.adName} · ${r.a.accountName}`}>
-                    🔴 ปิด <b>{r.a.adName || "(ไม่มีชื่อ)"}</b> <small>{why(r)}</small>
+                    🔴 ปิด <b>{r.a.adName || "(ไม่มีชื่อ)"}</b> <em className="reco-acct">@{r.a.accountName}</em> <small>{why(r)}</small>
                   </span>
                 ))}
                 {scale.map((r, i) => (
                   <span className="reco pill good" key={"s" + i} title={`${r.a.adName} · ${r.a.accountName}`}>
-                    🟢 สเกล <b>{r.a.adName || "(ไม่มีชื่อ)"}</b> <small>{why(r)}</small>
+                    🟢 สเกล <b>{r.a.adName || "(ไม่มีชื่อ)"}</b> <em className="reco-acct">@{r.a.accountName}</em> <small>{why(r)}</small>
                   </span>
                 ))}
               </div>
@@ -501,6 +501,70 @@ export default function Dashboard() {
               </div>
             </div>
           )}
+
+          {/* 🏦 แยกราย ad account — บัญชีไหนมีตัวไหนควรไปต่อ / พอแค่นี้ */}
+          {(() => {
+            const byAcct = new Map<string, TopAd[]>();
+            for (const a of data.topAds) {
+              const k = a.accountName || "(ไม่ระบุบัญชี)";
+              (byAcct.get(k) || byAcct.set(k, []).get(k)!).push(a);
+            }
+            const accts = [...byAcct.entries()]
+              .map(([name, ads]) => {
+                const spend = ads.reduce((s, a) => s + a.spend, 0);
+                const results = ads.reduce((s, a) => s + a.results, 0);
+                const rated = ads.map((a) => {
+                  const g = data.groups.find((x) => x.key === a.group);
+                  return { a, target: g?.target, dec: adDecision(a.cpr, a.results, a.spend, g?.target) };
+                });
+                const go = rated.filter((r) => r.dec?.cls === "good").sort((x, y) => x.a.cpr - y.a.cpr);
+                const stop = rated.filter((r) => r.dec?.cls === "bad").sort((x, y) => y.a.spend - x.a.spend);
+                return { name, spend, results, cpr: results ? spend / results : 0, go, stop, total: ads.length };
+              })
+              .filter((x) => x.spend > 0)
+              .sort((x, y) => y.spend - x.spend);
+            if (accts.length === 0) return null;
+            return (
+              <div className="panel">
+                <h2>🏦 แยกราย Ad Account<span className="hint">บัญชีไหน · ตัวไหนไปต่อ 🟢 / พอแค่นี้ 🔴 · เรียงตามค่าใช้จ่าย</span></h2>
+                <div className="acct-cards">
+                  {accts.map((ac) => (
+                    <div className="acct-card" key={ac.name}>
+                      <div className="acct-head-row">
+                        <strong>{ac.name}</strong>
+                        <span className="hint">฿{nInt(ac.spend)} · ทัก {nInt(ac.results)} · ค่าทัก {ac.cpr ? "฿" + nMoney(ac.cpr) : "–"} · {ac.total} ads</span>
+                      </div>
+                      {ac.go.length > 0 && (
+                        <div className="acct-list">
+                          <span className="acct-tag good">🟢 ไปต่อ</span>
+                          {ac.go.slice(0, 4).map((r, i) => (
+                            <div className="acct-ad" key={"g" + i}>
+                              <span className="name-cell">{r.a.adName || "(ไม่มีชื่อ)"}</span>
+                              <span className="good">฿{nMoney(r.a.cpr)}</span>
+                              <small className="hint">ทัก {r.a.results} · ฿{nInt(r.a.spend)}{r.target ? ` · เป้า ฿${r.target}` : ""}</small>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {ac.stop.length > 0 && (
+                        <div className="acct-list">
+                          <span className="acct-tag bad">🔴 พอแค่นี้</span>
+                          {ac.stop.slice(0, 4).map((r, i) => (
+                            <div className="acct-ad" key={"b" + i}>
+                              <span className="name-cell">{r.a.adName || "(ไม่มีชื่อ)"}</span>
+                              <span className="bad">{r.a.results === 0 ? "ทัก 0" : "฿" + nMoney(r.a.cpr)}</span>
+                              <small className="hint">ทัก {r.a.results} · ฿{nInt(r.a.spend)}{r.target ? ` · เป้า ฿${r.target}` : ""}</small>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {ac.go.length === 0 && ac.stop.length === 0 && <div className="hint">— ยังไม่มีตัวที่ชี้ขาด (ข้อมูลน้อย/ยังไม่ตั้งเป้า CPR)</div>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* 💰 ตัวเลขธุรกิจจริง — กรอกยอดขายช่วงนี้ → %Ads / ROAS / basket / ปิดการขาย */}
           <BizPanel spend={data.spend} results={data.results} since={data.since} until={data.until} readOnly={readOnly} />
