@@ -114,3 +114,10 @@ data/snapshot.json         ข้อมูล demo จริง (แค่ 3 บ
 - verify จริงก่อนบอกเสร็จ (มี preview tools, ไม่มี test runner → curl API + screenshot)
 - เปิด preview: `.claude/launch.json` config `ads-dashboard` (autoPort, `npm --prefix dashboard run preview`)
 - ทุก commit ลงท้าย Co-Authored-By ตามปกติ · push แล้ว = อยู่ GitHub
+
+## ⚡ ความเร็ว + กัน Supabase หลับ (2026-08-04)
+- **Supabase free pause เองถ้าไม่มี activity ~7 วัน** → เคยพังมาแล้ว (dashboard ตก live 60s timeout)
+- **แก้ถาวร:** `.github/workflows/keepalive-sync.yml` ยิง `/api/sync` ทุก 2 ชม. (GitHub Actions ฟรี) → ไม่หลับ + cache สดตลอด ~2 ชม.
+- `SYNC_DAYS=3` (sync ย้อน 3 วันต่อรอบ จบใน ~25s ไม่ชน 60s limit)
+- **CRON_SECRET เป็น Sensitive ใน Vercel = อ่านค่ากลับไม่ได้** ถ้าต้องใช้ ให้ rotate ใหม่แล้ว `gh secret set CRON_SECRET` ให้ตรงกัน
+- ผลวัดจริงหลังแก้: 7 วัน 2.5s · 30 วัน 2.5s · เดือนนี้ 1.6s (จากเดิม 504 timeout)
