@@ -34,15 +34,15 @@ export function parseTheme(name: string): string {
 }
 
 // ── สินค้า (ตามที่ผู้ใช้กำหนด) — เรียงเฉพาะเจาะจงก่อน กัน 1 click ultra/cart ชนกัน ──
+// คีย์เวิร์ดที่ทีมใช้จริงในชื่อ ads: Ultra / GPT / 1CC / A2 / 1 Cut / GRD
+// (ยืนยันกับผู้ใช้แล้ว: 1CC = 1 Click Cart, A2 = All Post)
 const PRODUCTS: { re: RegExp; label: string }[] = [
-  { re: /1\s*click\s*ultra|1\s*cc\s*ultra|(?=.*\bultra\b)(?=.*1\s*c)/i, label: "1 Click Ultra" },
-  { re: /1\s*click\s*cart|1\s*cc\s*cart|ปักตะกร้า|cart/i, label: "1 Click Cart" },
-  { re: /gpt\s*storyboard|storyboard|gpt|สตอรี่บอร์ด/i, label: "GPT Storyboard" },
-  { re: /all\s*post|allpost|ออลโพส/i, label: "All Post" },
-  { re: /1\s*cut|1cut|1\s*คัท/i, label: "1 Cut" },
   { re: /\bgrd\b|กรดไหลย้อน|hashi/i, label: "GRD" },
-  { re: /\bultra\b/i, label: "1 Click Ultra" }, // Ultra เดี่ยว ๆ = ultra
-  { re: /1\s*cc|1\s*click/i, label: "1 Click Ultra" },
+  { re: /gpt|storyboard|สตอรี่บอร์ด/i, label: "GPT Storyboard" },
+  { re: /1\s*cut|1cut|1\s*คัท/i, label: "1 Cut" }, // ก่อน 1CC — "1 Cut" ต้องไม่โดน 1CC จับ
+  { re: /1\s*c\.?c\.?\b|1\s*click\s*cart|ปักตะกร้า|\bcart\b/i, label: "1 Click Cart" },
+  { re: /\ba2\b|all\s*post|allpost|ออลโพส/i, label: "All Post" },
+  { re: /\bultra\b|1\s*click\s*ultra/i, label: "1 Click Ultra" },
 ];
 
 export function parseProduct(name: string): string {
