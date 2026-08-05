@@ -14,6 +14,28 @@ const RESULT_ACTIONS: { match: string; label: string }[] = [
   { match: "link_click", label: "คลิก" },
 ];
 
+// ── metric คุณภาพ: แยก "แชทผี" ออกจากคนจริง + ยอดขายจริง ────────────
+// depth_2 = user ส่งข้อความ ≥2 ครั้ง (กลับมาตอบ = คนจริง) ← ตัวชี้ขาดว่าแชทมีคุณภาพไหม
+const A_STARTED = "onsite_conversion.messaging_conversation_started_7d";
+const A_REPLIED = "onsite_conversion.messaging_conversation_replied_7d";
+const A_DEPTH2 = "onsite_conversion.messaging_user_depth_2_message_send";
+const A_DEPTH3 = "onsite_conversion.messaging_user_depth_3_message_send";
+const PURCHASE_TYPES = ["onsite_conversion.purchase", "omni_purchase", "purchase"];
+
+const findAction = (arr: any[], type: string): number => {
+  if (!Array.isArray(arr)) return 0;
+  const hit = arr.find((a) => a.action_type === type);
+  return hit ? parseFloat(hit.value || "0") || 0 : 0;
+};
+// ยอดซื้อ/มูลค่า: เลือก type แรกที่มีค่า (กันนับซ้ำ)
+const findFirst = (arr: any[], types: string[]): number => {
+  for (const t of types) {
+    const v = findAction(arr, t);
+    if (v > 0) return v;
+  }
+  return 0;
+};
+
 interface FetchArgs {
   token: string;
   accountIds?: string[];
@@ -110,7 +132,7 @@ async function fetchAccountAds(
   const timeRange = encodeURIComponent(JSON.stringify({ since, until }));
   let url =
     `${GRAPH}/act_${accountId}/insights` +
-    `?level=ad&fields=ad_name,spend,impressions,reach,actions&time_increment=1` +
+    `?level=ad&fields=ad_name,spend,impressions,reach,actions,action_values&time_increment=1` +
     `&time_range=${timeRange}&limit=500&access_token=${token}`;
   while (url) {
     const json = await gget(url);
@@ -127,6 +149,10 @@ async function fetchAccountAds(
         results,
         resultType,
         date: r.date_start,
+        // คุณภาพ: depth_2 = คนกลับมาตอบจริง (fallback replied_7d ถ้าไม่มี)
+        replies: Math.round(findAction(r.actions, A_DEPTH2) || findAction(r.actions, A_REPLIED)),
+        purchases: Math.round(findFirst(r.actions, PURCHASE_TYPES)),
+        revenue: findFirst(r.action_values, PURCHASE_TYPES),
       });
     }
     url = json.paging?.next || "";

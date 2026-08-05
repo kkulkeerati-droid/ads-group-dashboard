@@ -323,3 +323,4 @@ table.mini td, table.mini th { padding: 7px 9px; font-size: 12.5px; }
   .panel, .card { break-inside: avoid; box-shadow: none; }
   .wrap { max-width: 100%; padding-top: 8px; }
 }
+.view-switch { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }

@@ -32,3 +32,20 @@ export function parseTheme(name: string): string {
   for (const t of THEMES) if (t.re.test(name)) return t.label;
   return "ทั่วไป";
 }
+
+// ── สินค้า (ตามที่ผู้ใช้กำหนด) — เรียงเฉพาะเจาะจงก่อน กัน 1 click ultra/cart ชนกัน ──
+const PRODUCTS: { re: RegExp; label: string }[] = [
+  { re: /1\s*click\s*ultra|1\s*cc\s*ultra|(?=.*\bultra\b)(?=.*1\s*c)/i, label: "1 Click Ultra" },
+  { re: /1\s*click\s*cart|1\s*cc\s*cart|ปักตะกร้า|cart/i, label: "1 Click Cart" },
+  { re: /gpt\s*storyboard|storyboard|gpt|สตอรี่บอร์ด/i, label: "GPT Storyboard" },
+  { re: /all\s*post|allpost|ออลโพส/i, label: "All Post" },
+  { re: /1\s*cut|1cut|1\s*คัท/i, label: "1 Cut" },
+  { re: /\bgrd\b|กรดไหลย้อน|hashi/i, label: "GRD" },
+  { re: /\bultra\b/i, label: "1 Click Ultra" }, // Ultra เดี่ยว ๆ = ultra
+  { re: /1\s*cc|1\s*click/i, label: "1 Click Ultra" },
+];
+
+export function parseProduct(name: string): string {
+  for (const p of PRODUCTS) if (p.re.test(name)) return p.label;
+  return "อื่น ๆ";
+}

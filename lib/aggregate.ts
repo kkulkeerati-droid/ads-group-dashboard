@@ -1,5 +1,5 @@
 import { buildClassifier, type GroupDef } from "./groups";
-import { parseAudience, parseTheme } from "./content";
+import { parseAudience, parseTheme, parseProduct } from "./content";
 import type { ContentDim } from "./types";
 import type {
   AdRow,
@@ -33,8 +33,18 @@ interface Acc {
   impressions: number;
   reach: number;
   results: number;
+  replies: number;
+  purchases: number;
+  revenue: number;
 }
-const zero = (): Acc => ({ spend: 0, impressions: 0, reach: 0, results: 0 });
+const zero = (): Acc => ({ spend: 0, impressions: 0, reach: 0, results: 0, replies: 0, purchases: 0, revenue: 0 });
+
+// บวก metric คุณภาพเข้า accumulator (ที่เดียว — เรียกทุกจุดที่บวก spend)
+function addQ(a: Acc, r: AdRow) {
+  a.replies += r.replies || 0;
+  a.purchases += r.purchases || 0;
+  a.revenue += r.revenue || 0;
+}
 
 function cpm(a: Acc) {
   return a.impressions > 0 ? (a.spend / a.impressions) * 1000 : 0;
@@ -81,7 +91,7 @@ export function aggregate(
       groupResultType.set(key, new Map());
     }
     const ga = groupAcc.get(key)!;
-    ga.spend += r.spend;
+    ga.spend += r.spend; addQ(ga, r);
     ga.impressions += r.impressions;
     ga.reach += r.reach;
     ga.results += r.results;
@@ -90,7 +100,7 @@ export function aggregate(
       const rt = groupResultType.get(key)!;
       rt.set(r.resultType, (rt.get(r.resultType) || 0) + r.results);
     }
-    total.spend += r.spend;
+    total.spend += r.spend; addQ(total, r);
     total.impressions += r.impressions;
     total.reach += r.reach;
     total.results += r.results;
@@ -111,10 +121,11 @@ export function aggregate(
         results: 0,
         cpm: 0,
         cpr: 0,
+        replies: 0, replyRate: 0, cpReply: 0, purchases: 0, revenue: 0, roas: 0, convRate: 0, basket: 0,
       };
       accounts.set(accKey, acc);
     }
-    acc._acc.spend += r.spend;
+    acc._acc.spend += r.spend; addQ(acc._acc, r);
     acc._acc.impressions += r.impressions;
     acc._acc.reach += r.reach;
     acc._acc.results += r.results;
@@ -146,10 +157,11 @@ export function aggregate(
         results: 0,
         cpm: 0,
         cpr: 0,
+        replies: 0, replyRate: 0, cpReply: 0, purchases: 0, revenue: 0, roas: 0, convRate: 0, basket: 0,
       };
       adMap.set(adKey, ad);
     }
-    ad._acc.spend += r.spend;
+    ad._acc.spend += r.spend; addQ(ad._acc, r);
     ad._acc.impressions += r.impressions;
     ad._acc.reach += r.reach;
     ad._acc.results += r.results;
@@ -169,6 +181,7 @@ export function aggregate(
       results: a.results,
       cpm: round2(cpm(a)),
       cpr: round2(cpr(a)),
+      ...qualityOf(a),
       share: total.spend > 0 ? a.spend / total.spend : 0,
       ads: groupAds.get(g.key)!.size,
       resultType: topType,
@@ -196,25 +209,27 @@ export function aggregate(
   // นับต่อ "แอด" ไม่ใช่ต่อแถวรายวัน → ต้อง dedupe ชื่อก่อนนับ ads
   const themeAcc = new Map<string, Acc & { names: Set<string> }>();
   const audAcc = new Map<string, Acc & { names: Set<string> }>();
+  const prodAcc = new Map<string, Acc & { names: Set<string> }>();
   for (const r of rows) {
     if (!r.adName) continue;
     for (const [map, key] of [
       [themeAcc, parseTheme(r.adName)],
       [audAcc, parseAudience(r.adName)],
+      [prodAcc, parseProduct(r.adName)],
     ] as const) {
       let a = map.get(key);
       if (!a) { a = { ...zero(), names: new Set() }; map.set(key, a); }
-      a.spend += r.spend; a.impressions += r.impressions;
+      a.spend += r.spend; a.impressions += r.impressions; addQ(a, r);
       a.reach += r.reach; a.results += r.results;
       a.names.add(r.adName);
     }
   }
   const toDims = (m: Map<string, Acc & { names: Set<string> }>): ContentDim[] =>
     [...m.entries()]
-      .map(([key, a]) => ({ key, spend: round2(a.spend), results: a.results, cpr: round2(cpr(a)), ads: a.names.size }))
+      .map(([key, a]) => ({ key, spend: round2(a.spend), results: a.results, cpr: round2(cpr(a)), ads: a.names.size, ...qualityOf(a) }))
       .filter((d) => d.spend > 0)
       .sort((x, y) => y.spend - x.spend);
-  const content = { themes: toDims(themeAcc), audiences: toDims(audAcc) };
+  const content = { themes: toDims(themeAcc), audiences: toDims(audAcc), products: toDims(prodAcc) };
 
   return {
     content,
@@ -230,6 +245,7 @@ export function aggregate(
     results: total.results,
     cpm: round2(cpm(total)),
     cpr: round2(cpr(total)),
+    ...qualityOf(total),
     groups,
     accounts: accountList,
     topAds,
@@ -249,6 +265,21 @@ function finalizeMetric<T extends { _acc?: Acc }>(obj: T, a: Acc): any {
     results: a.results,
     cpm: round2(cpm(a)),
     cpr: round2(cpr(a)),
+    ...qualityOf(a),
+  };
+}
+
+// ตัวชี้ขาด: คนตอบจริง / ROAS / conversion / basket
+function qualityOf(a: Acc) {
+  return {
+    replies: a.replies,
+    replyRate: a.results > 0 ? round2((a.replies / a.results) * 100) : 0,
+    cpReply: a.replies > 0 ? round2(a.spend / a.replies) : 0,
+    purchases: a.purchases,
+    revenue: round2(a.revenue),
+    roas: a.spend > 0 ? round2(a.revenue / a.spend) : 0,
+    convRate: a.results > 0 ? round2((a.purchases / a.results) * 100) : 0,
+    basket: a.purchases > 0 ? round2(a.revenue / a.purchases) : 0,
   };
 }
 

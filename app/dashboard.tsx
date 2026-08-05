@@ -10,6 +10,8 @@ const PLATFORMS = [
   { key: "tiktok", label: "TikTok" },
 ] as const;
 
+const PRODUCT_COLORS = ["#6366f1", "#ec4899", "#14b8a6", "#f59e0b", "#8b5cf6", "#22c55e", "#64748b"];
+
 const PRESETS = [
   { key: "today", label: "วันนี้" },
   { key: "yesterday", label: "เมื่อวาน" },
@@ -101,6 +103,8 @@ const adGetVal = (a: TopAd, key: string): number | string => {
 export default function Dashboard() {
   const [platform, setPlatform] = useState<"all" | "meta" | "tiktok">("all");
   const [preset, setPreset] = useState("last_30d");
+  const [cardView, setCardViewRaw] = useState<"group" | "product">("group");
+  const setCardView = (v: "group" | "product") => { setCardViewRaw(v); try { localStorage.setItem("cardView", v); } catch {} };
   const [customSince, setCustomSince] = useState("");
   const [customUntil, setCustomUntil] = useState("");
   const [metric, setMetric] = useState<MetricKey>("spend");
@@ -129,6 +133,8 @@ export default function Dashboard() {
     const m = u.searchParams.get("metric");
     if (p === "all" || p === "meta" || p === "tiktok") setPlatform(p);
     if (pr) setPreset(pr);
+    const cv = localStorage.getItem("cardView");
+    if (cv === "product" || cv === "group") setCardViewRaw(cv);
     const qs2 = u.searchParams.get("since");
     const qu2 = u.searchParams.get("until");
     if (qs2 && qu2) { setCustomSince(qs2); setCustomUntil(qu2); }
@@ -397,23 +403,42 @@ export default function Dashboard() {
               </div>
             );
           })()}
+          {/* สลับมุมมองการ์ด: กลุ่มตาม prefix ↔ แยกตามสินค้า (1 Cut / Cart / Ultra / GPT St.) */}
+          {data.content?.products && data.content.products.length > 1 && (
+            <div className="view-switch no-print">
+              <span className="hint">ดูการ์ดตาม:</span>
+              <div className="seg">
+                <button className={cardView === "group" ? "active" : ""} onClick={() => setCardView("group")}>กลุ่ม (prefix)</button>
+                <button className={cardView === "product" ? "active" : ""} onClick={() => setCardView("product")}>สินค้า</button>
+              </div>
+            </div>
+          )}
+
           <div className="cards">
             <div className="card" style={{ ["--c" as any]: "#3b82f6" }}>
               <div className="k">รวมทั้งหมด</div>
               <div className="v">{showVal((data as any)[metric] || 0)}</div>
               <div className="m"><Delta cur={(data as any)[metric] || 0} prev={data.prev?.[metric]} lowerBetter={mMeta.lowerBetter} /> {data.accounts.length} บัญชี · {mMeta.label}</div>
             </div>
-            {groups.map((g) => (
-              <div className="card" key={g.key} style={{ ["--c" as any]: g.color }}>
-                <div className="k"><span className="dot" />{g.label}</div>
-                <div className={"v " + (metric === "cpr" ? cprStatus(g.cpr, g.target) : "")}>{showVal(groupVal(g))}</div>
-                <div className="m">
-                  {metric === "spend" && <><Delta cur={g.spend} prev={data.prev?.byGroup?.[g.key]} /> </>}
-                  {metric === "cpr" && g.target ? `เป้า ฿${g.target} · ` : ""}
-                  ฿{nInt(g.spend)} · {g.ads} ads{g.resultType ? ` · ${g.resultType}` : ""}
-                </div>
-              </div>
-            ))}
+            {cardView === "product" && data.content?.products
+              ? data.content.products.map((p, i) => (
+                  <div className="card" key={p.key} style={{ ["--c" as any]: PRODUCT_COLORS[i % PRODUCT_COLORS.length] }}>
+                    <div className="k"><span className="dot" />{p.key}</div>
+                    <div className="v">{showVal((p as any)[metric] ?? p.spend)}</div>
+                    <div className="m">฿{nInt(p.spend)} · {p.ads} ads · ทัก {nInt(p.results)}{p.cpr ? ` · ฿${nMoney(p.cpr)}/ทัก` : ""}</div>
+                  </div>
+                ))
+              : groups.map((g) => (
+                  <div className="card" key={g.key} style={{ ["--c" as any]: g.color }}>
+                    <div className="k"><span className="dot" />{g.label}</div>
+                    <div className={"v " + (metric === "cpr" ? cprStatus(g.cpr, g.target) : "")}>{showVal(groupVal(g))}</div>
+                    <div className="m">
+                      {metric === "spend" && <><Delta cur={g.spend} prev={data.prev?.byGroup?.[g.key]} /> </>}
+                      {metric === "cpr" && g.target ? `เป้า ฿${g.target} · ` : ""}
+                      ฿{nInt(g.spend)} · {g.ads} ads{g.resultType ? ` · ${g.resultType}` : ""}
+                    </div>
+                  </div>
+                ))}
           </div>
 
           <div className="panel">

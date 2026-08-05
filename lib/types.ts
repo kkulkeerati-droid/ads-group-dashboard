@@ -4,6 +4,13 @@ export type Platform = "meta" | "tiktok";
 export type MetricKey = "spend" | "results" | "cpr" | "cpm" | "reach" | "impressions";
 
 // แถวข้อมูลดิบระดับ ad (ต่อวันถ้ามี date)
+// metric คุณภาพ + ยอดขาย (แนบมากับทุก AdRow / ทุกระดับสรุป)
+export interface QualityMetrics {
+  replies: number;   // คนกลับมาตอบ (user ส่ง ≥2 ข้อความ) — กรองแชทผีออก
+  purchases: number; // จำนวนออเดอร์ที่ Meta นับได้
+  revenue: number;   // มูลค่ายอดขาย (THB)
+}
+
 export interface AdRow {
   platform: Platform;
   accountId: string;
@@ -15,6 +22,9 @@ export interface AdRow {
   results: number;
   resultType?: string; // เช่น messaging / interactions / purchase
   date?: string; // YYYY-MM-DD (live รายวัน)
+  replies?: number;   // คนกลับมาตอบ (depth_2)
+  purchases?: number; // ออเดอร์
+  revenue?: number;   // ยอดขาย
 }
 
 export interface Metricized {
@@ -24,6 +34,15 @@ export interface Metricized {
   results: number;
   cpm: number; // spend / impressions * 1000
   cpr: number; // spend / results (ต้นทุนต่อผลลัพธ์)
+  // ── ตัวชี้ขาดจริง (ทัก ≠ ลูกค้า) ──
+  replies: number;    // คนกลับมาตอบ admin
+  replyRate: number;  // replies / results (%) — ต่ำ = แชทผีเยอะ
+  cpReply: number;    // spend / replies — ต้นทุนต่อคนคุยจริง
+  purchases: number;  // ออเดอร์
+  revenue: number;    // ยอดขาย
+  roas: number;       // revenue / spend
+  convRate: number;   // purchases / results (%) — ทัก→ซื้อ
+  basket: number;     // revenue / purchases
 }
 
 export interface GroupTotal extends Metricized {
@@ -76,6 +95,8 @@ export interface ContentDim {
   results: number;
   cpr: number;
   ads: number; // จำนวนแอดในมิตินี้
+  replies: number; replyRate: number; cpReply: number;
+  purchases: number; revenue: number; roas: number; convRate: number; basket: number;
 }
 
 export interface AccountIssue {
@@ -99,5 +120,5 @@ export interface Metrics extends Metricized {
   accountIssues: AccountIssue[];
   warnings: string[];
   prev?: PrevTotals; // งวดก่อนหน้า (เทียบ)
-  content?: { themes: ContentDim[]; audiences: ContentDim[] }; // วิเคราะห์ content ads
+  content?: { themes: ContentDim[]; audiences: ContentDim[]; products: ContentDim[] };
 }

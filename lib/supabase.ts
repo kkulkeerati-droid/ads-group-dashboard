@@ -46,6 +46,9 @@ export async function upsertRows(rows: AdRow[]): Promise<number> {
     reach: r.reach,
     results: r.results,
     result_type: r.resultType || null,
+    replies: r.replies || 0,
+    purchases: r.purchases || 0,
+    revenue: r.revenue || 0,
   }));
   // รวมแถวที่ชน unique key กันเองใน batch — ads คนละตัวแต่ชื่อซ้ำ (จากการ duplicate ad)
   // ไม่งั้น Postgres error 21000: ON CONFLICT cannot affect row a second time
@@ -56,19 +59,37 @@ export async function upsertRows(rows: AdRow[]): Promise<number> {
     if (ex) {
       ex.spend += p.spend; ex.impressions += p.impressions;
       ex.reach += p.reach; ex.results += p.results;
+      ex.replies += p.replies; ex.purchases += p.purchases; ex.revenue += p.revenue;
     } else byKey.set(k, { ...p });
   }
   const payload = [...byKey.values()];
   // แบ่งเป็นก้อนละ 500
+  // คอลัมน์คุณภาพ (replies/purchases/revenue) อาจยังไม่มีในฐานข้อมูล (ยังไม่รัน migration 0002)
+  // → ถ้า Supabase ปฏิเสธเพราะไม่รู้จักคอลัมน์ ให้ตัดออกแล้วส่งใหม่ (ระบบไม่พังระหว่างรอ migrate)
+  const strip = (o: any) => {
+    const { replies, purchases, revenue, ...rest } = o;
+    return rest;
+  };
   let n = 0;
+  let dropQuality = false;
   for (let i = 0; i < payload.length; i += 500) {
-    const chunk = payload.slice(i, i + 500);
-    await sb(`${TABLE}?on_conflict=platform,account_id,ad_name,date`, {
-      method: "POST",
-      headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-      body: JSON.stringify(chunk),
-    });
-    n += chunk.length;
+    const raw = payload.slice(i, i + 500);
+    const send = (rows: any[]) =>
+      sb(`${TABLE}?on_conflict=platform,account_id,ad_name,date`, {
+        method: "POST",
+        headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify(rows),
+      });
+    try {
+      await send(dropQuality ? raw.map(strip) : raw);
+    } catch (e: any) {
+      const msg = String(e?.message || e);
+      if (!dropQuality && /replies|purchases|revenue|PGRST204|column/i.test(msg)) {
+        dropQuality = true;
+        await send(raw.map(strip));
+      } else throw e;
+    }
+    n += raw.length;
   }
   return n;
 }
@@ -107,5 +128,8 @@ export async function readRows(
     results: Number(d.results) || 0,
     resultType: d.result_type || undefined,
     date: d.date || undefined,
+    replies: Number(d.replies) || 0,
+    purchases: Number(d.purchases) || 0,
+    revenue: Number(d.revenue) || 0,
   }));
 }
