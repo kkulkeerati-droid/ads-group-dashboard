@@ -1,7 +1,8 @@
 import type { GroupKey } from "./groups";
 
 export type Platform = "meta" | "tiktok";
-export type MetricKey = "spend" | "results" | "cpr" | "cpm" | "reach" | "impressions";
+export type MetricKey = "spend" | "results" | "cpr" | "cpm" | "reach" | "impressions"
+  | "roas" | "revenue" | "replies" | "cpReply" | "replyRate" | "purchases" | "convRate" | "basket";
 
 // แถวข้อมูลดิบระดับ ad (ต่อวันถ้ามี date)
 // metric คุณภาพ + ยอดขาย (แนบมากับทุก AdRow / ทุกระดับสรุป)

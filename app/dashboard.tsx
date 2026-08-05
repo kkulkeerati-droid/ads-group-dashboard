@@ -22,8 +22,16 @@ const PRESETS = [
 
 const METRICS: { key: MetricKey; label: string; money: boolean; lowerBetter?: boolean }[] = [
   { key: "spend", label: "ค่าใช้จ่าย", money: true },
-  { key: "results", label: "ผลลัพธ์/ทัก", money: false },
-  { key: "cpr", label: "ต้นทุน/ผลลัพธ์", money: true, lowerBetter: true },
+  { key: "roas", label: "ROAS ⭐", money: false },
+  { key: "revenue", label: "ยอดขาย", money: true },
+  { key: "replies", label: "คนตอบจริง ⭐", money: false },
+  { key: "cpReply", label: "ต้นทุน/คนตอบ", money: true, lowerBetter: true },
+  { key: "replyRate", label: "% ตอบกลับ", money: false },
+  { key: "purchases", label: "ออเดอร์", money: false },
+  { key: "convRate", label: "% ปิดการขาย", money: false },
+  { key: "basket", label: "Basket size", money: true },
+  { key: "results", label: "ทัก (ดิบ)", money: false },
+  { key: "cpr", label: "ต้นทุน/ทัก", money: true, lowerBetter: true },
   { key: "cpm", label: "CPM", money: true, lowerBetter: true },
   { key: "reach", label: "Reach", money: false },
   { key: "impressions", label: "Impressions", money: false },
@@ -418,7 +426,7 @@ export default function Dashboard() {
             <div className="card" style={{ ["--c" as any]: "#3b82f6" }}>
               <div className="k">รวมทั้งหมด</div>
               <div className="v">{showVal((data as any)[metric] || 0)}</div>
-              <div className="m"><Delta cur={(data as any)[metric] || 0} prev={data.prev?.[metric]} lowerBetter={mMeta.lowerBetter} /> {data.accounts.length} บัญชี · {mMeta.label}</div>
+              <div className="m"><Delta cur={(data as any)[metric] || 0} prev={(data.prev as any)?.[metric]} lowerBetter={mMeta.lowerBetter} /> {data.accounts.length} บัญชี · {mMeta.label}</div>
             </div>
             {cardView === "product" && data.content?.products
               ? data.content.products.map((p, i) => (
