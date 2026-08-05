@@ -42,7 +42,8 @@ const PRODUCTS: { re: RegExp; label: string }[] = [
   { re: /1\s*cut|1cut|1\s*คัท/i, label: "1 Cut" }, // ก่อน 1CC — "1 Cut" ต้องไม่โดน 1CC จับ
   { re: /1\s*c\.?c\.?\b|1\s*click\s*cart|ปักตะกร้า|\bcart\b/i, label: "1 Click Cart" },
   { re: /\ba2\b|all\s*post|allpost|ออลโพส/i, label: "All Post" },
-  { re: /\bultra\b|1\s*click\s*ultra/i, label: "1 Click Ultra" },
+  // Ultra: ชื่อตรง + มุมคอนเทนต์ที่ยืนยันแล้วว่าขาย Ultra (ผลไม้ / Omni / ดราม่า)
+  { re: /\bultra\b|1\s*click\s*ultra|ผลไม้|\bomni\b|ดราม่า|drama/i, label: "1 Click Ultra" },
 ];
 
 export function parseProduct(name: string): string {
