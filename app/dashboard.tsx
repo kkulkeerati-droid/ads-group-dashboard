@@ -16,6 +16,7 @@ const PRESETS = [
   { key: "today", label: "วันนี้" },
   { key: "yesterday", label: "เมื่อวาน" },
   { key: "last_7d", label: "7 วัน" },
+  { key: "last_14d", label: "14 วัน" },
   { key: "last_30d", label: "30 วัน" },
   { key: "this_month", label: "เดือนนี้" },
 ];
@@ -110,7 +111,7 @@ const adGetVal = (a: TopAd, key: string): number | string => {
 
 export default function Dashboard() {
   const [platform, setPlatform] = useState<"all" | "meta" | "tiktok">("all");
-  const [preset, setPreset] = useState("last_30d");
+  const [preset, setPreset] = useState("last_14d");
   const [cardView, setCardViewRaw] = useState<"group" | "product">("group");
   const setCardView = (v: "group" | "product") => { setCardViewRaw(v); try { localStorage.setItem("cardView", v); } catch {} };
   const [customSince, setCustomSince] = useState("");

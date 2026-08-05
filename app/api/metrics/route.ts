@@ -29,6 +29,7 @@ function resolveRange(preset: string, qsince?: string, quntil?: string) {
     case "today": break;
     case "yesterday": start.setDate(start.getDate() - 1); end.setDate(end.getDate() - 1); break;
     case "last_7d": start.setDate(start.getDate() - 6); break;
+    case "last_14d": start.setDate(start.getDate() - 13); break;
     case "this_month": start.setDate(1); break;
     case "last_30d":
     default: start.setDate(start.getDate() - 29); break;
@@ -46,7 +47,7 @@ function hashFactor(s: string): number {
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
   const platform = (sp.get("platform") || "all") as "meta" | "tiktok" | "all";
-  const preset = sp.get("preset") || "last_30d";
+  const preset = sp.get("preset") || "last_14d";
   const { since, until } = resolveRange(preset, sp.get("since") || undefined, sp.get("until") || undefined);
   const groupsConfig = parseGroupsParam(sp.get("groups"));
   const acctFilter = (sp.get("accounts") || "").split(",").map((s) => s.trim()).filter(Boolean);
@@ -73,6 +74,8 @@ export async function GET(req: NextRequest) {
     try {
       const earliest = await earliestDate(platform);
       if (earliest !== null && earliest <= since) {
+        if (until >= todayISO)
+          warnings.push(`ช่วงนี้รวม "วันนี้" ที่ยังไม่จบวัน — เลขวันนี้สดถึงรอบ sync ล่าสุด (~ทุก 2 ชม.) · อยากเห็นวันนี้แบบสดกดปุ่ม "วันนี้"`);
         const rows = filterAcc(await readRows(platform, since, until));
         if (rows.length > 0) {
           const prevRows = filterAcc(await readRows(platform, prevSince, prevUntil));
