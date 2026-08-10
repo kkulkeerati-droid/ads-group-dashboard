@@ -176,6 +176,9 @@ tbody tr:last-child td { border-bottom: none; }
 
 /* ── metric selector ─────────────────────────────────────────────── */
 .metric-bar { display: flex; align-items: center; gap: 11px; margin-bottom: 18px; flex-wrap: wrap; }
+/* เมตริก 14 ตัวเรียงแถวเดียวยาวเกินจอแคบ → ให้เลื่อนในแถบตัวเอง ไม่ใช่ดันทั้งหน้า */
+.metric-bar .seg { overflow-x: auto; max-width: 100%; scrollbar-width: thin; }
+.metric-bar .seg button { flex: 0 0 auto; }
 .metric-lbl { font-size: 12.5px; color: var(--muted); font-weight: 650; }
 
 /* ── trend chart ─────────────────────────────────────────────────── */
@@ -258,13 +261,19 @@ td.good, td.bad, td.warn, td.fix { font-weight: 700; }
 /* ── 🎯 แถบสรุปคำแนะนำ ─────────────────────────────────────────── */
 .reco-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 10px 14px; margin-bottom: 14px; }
 .reco-title { font-weight: 750; font-size: 13px; margin-right: 2px; }
-.reco { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 5px 10px; border-radius: 999px; max-width: 100%; }
+.reco { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 5px 10px; border-radius: 999px; max-width: 100%; min-width: 0; }
 .reco b { font-weight: 700; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.reco small { opacity: .75; font-size: 11px; white-space: nowrap; }
+/* เหตุผลของธงยาวได้ (มีตัวเลขครบ) — ตัดท้ายด้วย … แทนที่จะดันหน้าให้เลื่อนซ้ายขวา
+   ข้อความเต็มอยู่ใน title ของ pill อยู่แล้ว ชี้เมาส์ก็เห็น */
+.reco small { opacity: .75; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1 1 auto; }
 
 /* ── 🎨 content ads + 💰 biz panel ───────────────────────────────── */
-.content-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+/* grid ที่มีตารางอยู่ข้างใน ต้องใส่ min-width:0 ให้ทั้ง track และลูก
+   ไม่งั้น grid item จะกางตามความกว้างตารางแล้วดันทั้งหน้าให้เลื่อนซ้ายขวา */
+.content-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; }
+.content-grid > div { min-width: 0; overflow-x: auto; }
 .content-sub { font-weight: 750; font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
+table.mini { min-width: 340px; }
 table.mini td, table.mini th { padding: 7px 9px; font-size: 12.5px; }
 .biz-row { display: flex; gap: 18px; flex-wrap: wrap; align-items: stretch; }
 .biz-inputs { display: flex; flex-direction: column; gap: 8px; min-width: 190px; }

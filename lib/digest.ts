@@ -1,4 +1,5 @@
 import type { Metrics, ContentDim, TopAd } from "./types";
+import { ROAS_OK } from "./decide";
 
 // ─── Weekly Digest ───────────────────────────────────────────────────
 // 5 หัวข้อตามที่ผู้ใช้กำหนด: ทำอะไรไป / ได้ผลไหมเทียบ KPI / เรียนรู้อะไร /
@@ -132,17 +133,23 @@ export function buildDigest(cur: Metrics, prev: Metrics, kpi: DigestKPI): Digest
   if (!brandSuggest.length) brandSuggest.push({ text: "ทุก KPI อยู่ในเกณฑ์ — ยังไม่มีเรื่องที่ต้องให้แบรนด์แก้", tone: "good" });
 
   // ── headline ──
-  // ปลายทางของงบต้องเป็น "ชื่อสินค้าจริง" เสมอ — ถ้าสัปดาห์นี้ไม่มีตัวไหนถึงเป้า
-  // ให้ใช้ตัวที่ ROAS ดีสุดเท่าที่มี (ขอแค่ยังไม่ขาดทุน) แทนคำลอย ๆ ว่า "ตัวที่ดีสุด"
-  const bestP = scaleP[0] || prods.filter((p) => p.roas >= 1).sort((a, b) => b.roas - a.roas)[0];
-  const dest = bestP ? `${bestP.key} (ROAS ${bestP.roas.toFixed(2)})` : "";
-  const headline = killP.length
-    ? dest
-      ? `หยุด ${killP[0].key} (ติดลบ ${money(killP[0].spend - killP[0].revenue)}) แล้วย้ายงบไป ${dest}`
-      : `หยุด ${killP[0].key} (ติดลบ ${money(killP[0].spend - killP[0].revenue)}) — สัปดาห์นี้ยังไม่มีตัวไหนคืนทุน อย่าเพิ่งเติมงบที่ไหน`
+  // ⚠️ ห้ามสั่ง "ย้ายงบไป X" ถ้า X ยังไม่ถึงเส้นสเกล — จะขัดกับธงของตัวเอง
+  //    (เคสจริง: พอขึ้นเส้นเป็น 3.5 หัวเรื่องเคยสั่งย้ายงบไปตัวที่ ROAS 1.81
+  //     ซึ่งบนเว็บติดธง 🟠 ลดงบ อยู่)
+  // ถึงเส้นสเกล → สั่งย้ายงบได้ · ยังไม่ถึงแต่ ≥ ROAS_OK → บอกว่าใครนำ แต่ห้ามเติม · ต่ำกว่านั้น → อย่าเติมที่ไหนเลย
+  const winner = scaleP[0];
+  const leader = prods.filter((p) => p.roas >= ROAS_OK).sort((a, b) => b.roas - a.roas)[0];
+  const stopTxt = killP.length ? `หยุด ${killP[0].key} (ติดลบ ${money(killP[0].spend - killP[0].revenue)})` : "";
+  const nextMove = winner
+    ? `ย้ายงบไป ${winner.key} (ROAS ${winner.roas.toFixed(2)})`
+    : leader
+      ? `ยังไม่มีตัวไหนถึงเส้นสเกล ${kpi.roas} — ${leader.key} นำอยู่ที่ ${leader.roas.toFixed(2)} แต่ยังไม่ควรเติมงบ`
+      : `ทั้งพอร์ตยังไม่มีตัวไหนถึง ROAS ${ROAS_OK} — หยุดเลือดก่อน อย่าเพิ่งเติมงบที่ไหน`;
+  const headline = stopTxt
+    ? `${stopTxt} · ${nextMove}`
     : cur.roas >= kpi.roas
-      ? `ROAS ${cur.roas.toFixed(2)} ผ่านเป้า — เพิ่มงบ ${dest || "ตัวชนะ"} +20%`
-      : `ROAS ${cur.roas.toFixed(2)} ต่ำกว่าเป้า ${kpi.roas} — โฟกัสแก้คุณภาพแชท/ปิดการขายก่อนเพิ่มงบ`;
+      ? `ROAS ${cur.roas.toFixed(2)} ผ่านเส้นสเกล — เพิ่มงบ ${winner?.key || "ตัวชนะ"} +20%`
+      : `ROAS ${cur.roas.toFixed(2)} ต่ำกว่าเส้นสเกล ${kpi.roas} — ${nextMove}`;
 
   return {
     since: cur.since, until: cur.until, prevSince, prevUntil,
