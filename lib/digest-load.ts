@@ -5,6 +5,7 @@
 import { supabaseEnabled, readRows } from "./supabase";
 import { aggregate } from "./aggregate";
 import { buildDigest, type Digest, type DigestKPI } from "./digest";
+import { ROAS_SCALE } from "./decide";
 import type { GroupDef } from "./groups";
 import type { AdRow } from "./types";
 
@@ -13,7 +14,23 @@ export function addDays(iso: string, n: number): string {
   return new Date(Date.UTC(y, m - 1, d) + n * 86400000).toISOString().slice(0, 10);
 }
 
-export const DEFAULT_KPI: DigestKPI = { roas: 2, replyRate: 60, convRate: 15 };
+// ROAS เป้าใช้เส้นเดียวกับธงบนเว็บ (lib/decide.ts) — user กำหนด 3.5
+export const DEFAULT_KPI: DigestKPI = { roas: ROAS_SCALE, replyRate: 60, convRate: 15 };
+
+/** โหลดตัวเลขของวันเดียว (ใช้กับสรุปรายวัน) */
+export async function loadDay(date: string, groupsConfig?: GroupDef[]) {
+  if (!supabaseEnabled()) return null;
+  const rows = await readRows("all", date, date);
+  return aggregate(rows as AdRow[], { source: "supabase", platform: "all", since: date, until: date, groupsConfig });
+}
+
+/** โหลด 7 วันล่าสุดที่จบวัน `until` (ใช้เป็นฐานตัดสินใจของสรุปรายวัน) */
+export async function loadWeek(until: string, groupsConfig?: GroupDef[]) {
+  if (!supabaseEnabled()) return null;
+  const since = addDays(until, -6);
+  const rows = await readRows("all", since, until);
+  return aggregate(rows as AdRow[], { source: "supabase", platform: "all", since, until, groupsConfig });
+}
 
 export type DigestLoad = { ok: true; digest: Digest } | { ok: false; error: string; status: number };
 

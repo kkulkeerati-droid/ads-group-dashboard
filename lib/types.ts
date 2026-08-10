@@ -81,6 +81,8 @@ export interface TopAd extends Metricized {
   group: string;
   accountName: string;
   platform: Platform;
+  /** จำนวนวันที่แอดตัวนี้มีข้อมูลในช่วงที่ดู — < 3 = ยังอยู่ learning ห้ามแตะ */
+  activeDays?: number;
 }
 
 export interface SeriesPoint {

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type CSSProperties } from "react";
 import type { Metrics, MetricKey, AccountTotal, TopAd } from "@/lib/types";
 import { GROUPS, type GroupDef } from "@/lib/groups";
-import { decideAd, buildScope, actionWeight, type Decision, type DecideScope } from "@/lib/decide";
+import { decideAd, buildScope, actionWeight, ROAS_SCALE, ROAS_OK, ROAS_BREAKEVEN, type Decision, type DecideScope } from "@/lib/decide";
 
 const PLATFORMS = [
   { key: "all", label: "ทั้งหมด" },
@@ -45,8 +45,8 @@ const fmtMetric = (v: number, money: boolean) => (money ? "฿" + nMoney(v) : nI
 
 const DEFAULT_GROUPS_JSON = JSON.stringify(GROUPS);
 
-// เป้า ROAS ที่ใช้ตัดธง 🟢/🟡/🔴 — ต้องตรงกับ default ของ /digest (?kpiRoas=)
-const KPI_ROAS = 2;
+// เส้นสเกล ROAS — นิยามอยู่ที่ lib/decide.ts ที่เดียว (ตอนนี้ 3.5 ตามที่ user กำหนด)
+const KPI_ROAS = ROAS_SCALE;
 
 // ─── เทียบงวด + สถานะเป้า/ธงตัดสินใจ ─────────────────────────────────
 function Delta({ cur, prev, lowerBetter }: { cur: number; prev?: number; lowerBetter?: boolean }) {
@@ -72,11 +72,12 @@ function replyStatus(rate: number): "good" | "warn" | "bad" | "" {
   if (rate >= 40) return "warn";
   return "bad";
 }
-// ROAS — เกณฑ์ธุรกิจ: >=2 ดี, 1-2 พอไหว, <1 ขาดทุน
-function roasStatus(r: number): "good" | "warn" | "bad" | "" {
+// ROAS — เส้นเดียวกับธง: ≥3.5 สเกลได้ · 2-3.5 เริ่มแย่ · 1-2 ลดงบ · <1 ขาดทุน
+function roasStatus(r: number): "good" | "warn" | "poor" | "bad" | "" {
   if (!r) return "";
-  if (r >= 2) return "good";
-  if (r >= 1) return "warn";
+  if (r >= ROAS_SCALE) return "good";
+  if (r >= ROAS_OK) return "warn";
+  if (r >= ROAS_BREAKEVEN) return "poor";
   return "bad";
 }
 
@@ -84,7 +85,7 @@ function roasStatus(r: number): "good" | "warn" | "bad" | "" {
 // wrapper นี้แค่ผูก ad กับ scope ของชุดข้อมูลที่กำลังดูอยู่
 function decide(a: TopAd, scope: DecideScope, target?: number): Decision | null {
   return decideAd(
-    { spend: a.spend, results: a.results, replies: a.replies, revenue: a.revenue, roas: a.roas, cpReply: a.cpReply, cpr: a.cpr, adName: a.adName },
+    { spend: a.spend, results: a.results, replies: a.replies, revenue: a.revenue, roas: a.roas, cpReply: a.cpReply, cpr: a.cpr, adName: a.adName, activeDays: a.activeDays },
     { kpiRoas: scope.kpiRoas, avgCpReply: scope.avgCpReply, peerHasRevenue: scope.groupsWithRevenue.has(a.group), target }
   );
 }
@@ -440,9 +441,9 @@ export default function Dashboard() {
               })
               .filter((r) => r.dec);
             const close = recs
-              .filter((r) => r.dec!.cls === "bad")
+              .filter((r) => r.dec!.cls === "bad" || r.dec!.cls === "poor")
               .sort((x, y) => actionWeight(y.dec!, y.a.spend, y.a.revenue) - actionWeight(x.dec!, x.a.spend, x.a.revenue))
-              .slice(0, 3);
+              .slice(0, 4);
             const scale = recs.filter((r) => r.dec!.cls === "good").sort((x, y) => y.a.roas - x.a.roas).slice(0, 3);
             const fix = recs
               .filter((r) => r.dec!.cls === "fix")
@@ -585,8 +586,9 @@ export default function Dashboard() {
                           // ไม่มียอดขายเลย → บอกว่า "ยังไม่มียอด" ไม่ใช่ตัดสินว่าแพง/ถูก
                           const [cls, tag] = !t.revenue
                             ? (t.spend > 0 ? ["fix", "⚫ ยังไม่มียอด"] : ["", "–"])
-                            : t.roas >= KPI_ROAS ? ["good", "🟢 อัดต่อ"]
-                            : t.roas >= 1 ? ["warn", "🟡 กลางๆ"]
+                            : t.roas >= ROAS_SCALE ? ["good", "🟢 อัดต่อ"]
+                            : t.roas >= ROAS_OK ? ["warn", "🟡 เริ่มแย่"]
+                            : t.roas >= ROAS_BREAKEVEN ? ["poor", "🟠 ลดงบ"]
                             : ["bad", "🔴 ขาดทุน"];
                           return (
                             <tr key={t.key} title={t.revenue ? `฿${nInt(t.spend)} → ฿${nInt(t.revenue)}` : `ใช้ ฿${nInt(t.spend)} ยังไม่มียอดขายเข้าระบบ`}>
@@ -624,7 +626,7 @@ export default function Dashboard() {
                 });
                 const go = rated.filter((r) => r.dec?.cls === "good").sort((x, y) => y.a.roas - x.a.roas);
                 const stop = rated
-                  .filter((r) => r.dec?.cls === "bad" || r.dec?.cls === "fix")
+                  .filter((r) => r.dec?.cls === "bad" || r.dec?.cls === "poor" || r.dec?.cls === "fix")
                   .sort((x, y) => actionWeight(y.dec!, y.a.spend, y.a.revenue) - actionWeight(x.dec!, x.a.spend, x.a.revenue));
                 return { name, spend, revenue, roas: spend ? revenue / spend : 0, results, cpr: results ? spend / results : 0, go, stop, total: ads.length };
               })
@@ -661,7 +663,7 @@ export default function Dashboard() {
                           {ac.stop.slice(0, 4).map((r, i) => (
                             <div className="acct-ad" key={"b" + i} title={r.dec!.why}>
                               <span className="name-cell">{r.a.adName || "(ไม่มีชื่อ)"}</span>
-                              <span className={r.dec!.cls}>{r.dec!.cls === "fix" ? "⚫ ไม่รู้ยอด" : r.a.revenue > 0 ? `ROAS ${r.a.roas.toFixed(2)}` : "ขาย ๐"}</span>
+                              <span className={r.dec!.cls}>{r.dec!.cls === "fix" ? "⚫ ไม่รู้ยอด" : r.a.revenue > 0 ? `${r.dec!.cls === "poor" ? "🟠 " : ""}ROAS ${r.a.roas.toFixed(2)}` : "ขาย ๐"}</span>
                               <small className="hint">฿{nInt(r.a.spend)} → ฿{nInt(r.a.revenue)} · ตอบจริง {r.a.replies}</small>
                             </div>
                           ))}
@@ -682,8 +684,9 @@ export default function Dashboard() {
             <h2>
               Top ads
               <span className="hint">
-                25 อันดับแรก (ตามค่าใช้จ่าย) · คลิกหัวคอลัมน์เพื่อเรียงภายใน 25 ตัว · ธงตัดจาก <b>ROAS เป้า {KPI_ROAS}</b>{" "}
-                (🟢 ≥{KPI_ROAS} · 🟡 1–{KPI_ROAS} · 🔴 &lt;1 หรือขาย ๐ · ⚫ ยังไม่มียอดเข้าระบบ · ⏳ ใช้ยังไม่ถึง ฿300) — ชี้ที่ธงเพื่อดูเหตุผล
+                25 อันดับแรก (ตามค่าใช้จ่าย) · คลิกหัวคอลัมน์เพื่อเรียงภายใน 25 ตัว · ธงตัดจาก <b>ROAS · เส้นสเกล {KPI_ROAS}</b>{" "}
+                (🟢 ≥{ROAS_SCALE} สเกล · 🟡 {ROAS_OK}–{ROAS_SCALE} เริ่มแย่ · 🟠 {ROAS_BREAKEVEN}–{ROAS_OK} ลดงบ · 🔴 &lt;{ROAS_BREAKEVEN} หรือขาย ๐ ·
+                ⚫ ยังไม่มียอดเข้าระบบ · ⏳ ใช้ยังไม่ถึง ฿300) — ชี้ที่ธงเพื่อดูเหตุผล
               </span>
             </h2>
             <div className="tbl-scroll">

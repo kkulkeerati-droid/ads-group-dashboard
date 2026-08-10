@@ -12,7 +12,7 @@
 
 import { parseAudience } from "./content";
 
-export type DecisionCls = "good" | "warn" | "bad" | "fix" | "idle";
+export type DecisionCls = "good" | "warn" | "poor" | "bad" | "fix" | "idle";
 
 export interface Decision {
   label: string; // ป้ายที่โชว์ เช่น "🟢 สเกล"
@@ -24,6 +24,15 @@ export interface Decision {
 // ตัวเลขขั้นต่ำที่ยอมให้ตัดสิน — ต่ำกว่านี้ยังเป็น learning / ข้อมูลน้อยเกิน
 export const MIN_SPEND_TO_JUDGE = 300;
 
+// ─── เส้นแบ่ง ROAS (user กำหนดเอง 10 ส.ค. 69) ────────────────────────
+// "ROAS > 3.5 ถึงจะให้ scale ต่ำกว่านี้ถือว่าเริ่มแย่แล้ว"
+export const ROAS_SCALE = 3.5; // ≥ นี้ = เพิ่มงบได้
+export const ROAS_OK = 2; // 2–3.5 = เริ่มแย่ · ยังไม่ต้องปิด แต่ห้ามเติมงบ
+export const ROAS_BREAKEVEN = 1; // < 1 = ขาดทุนตั้งแต่ยังไม่หักต้นทุนสินค้า
+
+// แอดที่ยิงมายังไม่ถึงกี่วัน = ยังอยู่ learning ห้ามแตะ (กติกาบ้าน)
+export const MIN_ACTIVE_DAYS = 3;
+
 export interface DecideInput {
   spend: number;
   results: number; // ทัก
@@ -33,6 +42,7 @@ export interface DecideInput {
   cpReply: number;
   cpr: number;
   adName?: string;
+  activeDays?: number; // จำนวนวันที่มีข้อมูล — น้อยกว่า 3 = ยัง learning
 }
 
 export interface DecideCtx {
@@ -59,7 +69,18 @@ export function decideAd(ad: DecideInput, ctx: DecideCtx): Decision | null {
   const { spend, results, replies, revenue, roas, cpReply } = ad;
   if (spend <= 0) return null;
 
-  // ── 0) ข้อมูลน้อยเกินจะตัดสิน (ตัวเพิ่งเปิด = learning ห้ามแตะ) ──
+  // ── 0) ยังตัดสินไม่ได้ — เงินน้อยเกิน หรือเพิ่งเปิดยังไม่พ้น learning ──
+  // เคสจริง: clone ที่เพิ่งเกิดเมื่อวาน ใช้ ฿681 ยอด ๐ → เกณฑ์เก่าสั่ง "ปิด"
+  // ทั้งที่กติกาบ้านคือแอดอายุ < 3 วันห้ามแตะ (ยอดขายยังตามมาไม่ทัน)
+  const days = ad.activeDays;
+  if (days !== undefined && days > 0 && days < MIN_ACTIVE_DAYS) {
+    return {
+      label: "⏳ ยัง learning",
+      cls: "idle",
+      why: `เพิ่งยิงได้ ${days} วัน (${money(spend)}) — กติกาบ้าน: อายุน้อยกว่า ${MIN_ACTIVE_DAYS} วันห้ามแตะ ยอดขายยังตามมาไม่ทัน`,
+      basis: "low-data",
+    };
+  }
   if (spend < MIN_SPEND_TO_JUDGE) {
     return {
       label: "⏳ รอข้อมูล",
@@ -90,29 +111,38 @@ export function decideAd(ad: DecideInput, ctx: DecideCtx): Decision | null {
     };
   }
 
-  // ── 2) มียอดขาย → ROAS ตัดสิน ──
+  // ── 2) มียอดขาย → ROAS ตัดสิน (4 ขั้น) ──
   if (revenue > 0) {
     const roasTxt = `ROAS ${roas.toFixed(2)}`;
+    const flow = `${money(spend)} → ${money(revenue)}`;
     if (roas >= ctx.kpiRoas) {
       return {
         label: "🟢 สเกล",
         cls: "good",
-        why: `${roasTxt} ผ่านเป้า ${ctx.kpiRoas} — ${money(spend)} ได้กลับ ${money(revenue)} (กำไรหลังค่าแอด ${money(revenue - spend)})`,
+        why: `${roasTxt} ผ่านเส้นสเกล ${ctx.kpiRoas} — ${flow} (เหลือหลังค่าแอด ${money(revenue - spend)})`,
         basis: "roas",
       };
     }
-    if (roas >= 1) {
+    if (roas >= ROAS_OK) {
       return {
-        label: "🟡 เฝ้าดู",
+        label: "🟡 เริ่มแย่",
         cls: "warn",
-        why: `${roasTxt} — คืนทุนค่าแอดแต่ยังไม่ถึงเป้า ${ctx.kpiRoas} (${money(spend)} → ${money(revenue)})`,
+        why: `${roasTxt} — ยังไปได้แต่ยังไม่ถึงเส้นสเกล ${ctx.kpiRoas} · อย่าเพิ่งเติมงบ (${flow})`,
+        basis: "roas",
+      };
+    }
+    if (roas >= ROAS_BREAKEVEN) {
+      return {
+        label: "🟠 ลดงบ",
+        cls: "poor",
+        why: `${roasTxt} — คืนแค่ค่าแอด ยังไม่พอต้นทุนสินค้า/ค่าส่ง (${flow}) · ลดงบแล้วแก้ก่อน`,
         basis: "roas",
       };
     }
     return {
       label: "🔴 ปิด",
       cls: "bad",
-      why: `${roasTxt} ขาดทุน — ${money(spend)} ได้กลับแค่ ${money(revenue)} (ติดลบ ${money(spend - revenue)})`,
+      why: `${roasTxt} ขาดทุนตั้งแต่ยังไม่หักต้นทุนสินค้า — ${flow} (ติดลบ ${money(spend - revenue)})`,
       basis: "roas",
     };
   }
@@ -159,7 +189,7 @@ export interface DecideScope {
 export function buildScope(
   ads: { group: string; revenue: number }[],
   totals: { cpReply: number },
-  kpiRoas = 2
+  kpiRoas = ROAS_SCALE
 ): DecideScope {
   const groupsWithRevenue = new Set<string>();
   for (const a of ads) if (a.revenue > 0) groupsWithRevenue.add(a.group);
@@ -169,6 +199,10 @@ export function buildScope(
 /** เรียงความสำคัญของสิ่งที่ต้องลงมือ — เงินที่กำลังไหลออกมาก่อน */
 export function actionWeight(d: Decision, spend: number, revenue: number): number {
   if (d.cls === "bad") return spend - revenue; // ติดลบเยอะสุด = เร่งสุด
+  if (d.cls === "poor") return (spend - revenue) * 0.6; // คืนแค่ค่าแอด — รองลงมา
   if (d.cls === "fix") return spend * 0.5;
   return 0;
 }
+
+/** ธงที่ต้องลงมือทำอะไรสักอย่าง (ใช้กรองในแถบแนะนำ / ข้อความ Telegram) */
+export const NEEDS_ACTION: DecisionCls[] = ["bad", "poor", "fix"];

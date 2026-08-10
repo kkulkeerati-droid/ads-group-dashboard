@@ -81,6 +81,8 @@ export function aggregate(
   const accounts = new Map<string, AccountTotal & { _acc: Acc }>();
   const seriesMap = new Map<string, Record<string, number>>();
   const adMap = new Map<string, TopAd & { _acc: Acc }>();
+  // วันที่ที่แต่ละ ad มีข้อมูล — ใช้ดูว่าเพิ่งเกิด (ยัง learning) หรือยิงมานานแล้ว
+  const adDays = new Map<string, Set<string>>();
   const total = zero();
 
   for (const r of rows) {
@@ -161,6 +163,11 @@ export function aggregate(
       };
       adMap.set(adKey, ad);
     }
+    if (r.date) {
+      let ds = adDays.get(adKey);
+      if (!ds) { ds = new Set(); adDays.set(adKey, ds); }
+      ds.add(r.date);
+    }
     ad._acc.spend += r.spend; addQ(ad._acc, r);
     ad._acc.impressions += r.impressions;
     ad._acc.reach += r.reach;
@@ -193,10 +200,10 @@ export function aggregate(
     .map((a) => finalizeMetric(a, a._acc))
     .sort((x, y) => y.spend - x.spend);
 
-  const topAds: TopAd[] = [...adMap.values()]
-    .sort((x, y) => y._acc.spend - x._acc.spend)
+  const topAds: TopAd[] = [...adMap.entries()]
+    .sort((x, y) => y[1]._acc.spend - x[1]._acc.spend)
     .slice(0, 25)
-    .map((a) => finalizeMetric(a, a._acc));
+    .map(([k, a]) => ({ ...finalizeMetric(a, a._acc), activeDays: adDays.get(k)?.size ?? 0 }));
 
   let series: SeriesPoint[] = [...seriesMap.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))

@@ -1,0 +1,33 @@
+# ส่งสรุปเข้า Telegram ทุกเช้า
+# - cron ของ GitHub เป็น UTC → 01:00 UTC = 08:00 น. ไทย
+# - สรุป "เมื่อวาน" (วันที่จบแล้ว) + ธงตัดสินใจจาก 7 วันล่าสุด
+# - เช้าวันจันทร์จะแนบสรุปสัปดาห์ที่ผ่านมาเป็นข้อความที่ 2 ให้เอง
+# - ต้องตั้ง secret: CRON_SECRET · env บน Vercel: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+name: daily-telegram
+on:
+  schedule:
+    - cron: "0 1 * * *"
+  workflow_dispatch:
+    inputs:
+      dry:
+        description: "ทดสอบอย่างเดียว ไม่ส่งเข้า Telegram"
+        type: boolean
+        default: false
+      date:
+        description: "วันที่จะสรุป (YYYY-MM-DD, ว่าง = เมื่อวาน)"
+        type: string
+        default: ""
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Push daily summary to Telegram
+        run: |
+          URL="${{ vars.DASHBOARD_URL || 'https://dashboard-ads-thanatos.vercel.app' }}/api/digest/telegram?key=${{ secrets.CRON_SECRET }}"
+          [ -n "${{ inputs.date }}" ] && URL="$URL&date=${{ inputs.date }}"
+          [ "${{ inputs.dry }}" = "true" ] && URL="$URL&dry=1"
+          BODY=$(curl -sS --max-time 115 -w "\n%{http_code}" "$URL")
+          CODE=$(echo "$BODY" | tail -1)
+          echo "$BODY" | head -c 4000
+          echo ""
+          [ "$CODE" = "200" ] || { echo "::error::ส่ง Telegram ไม่สำเร็จ (HTTP $CODE)"; exit 1; }
