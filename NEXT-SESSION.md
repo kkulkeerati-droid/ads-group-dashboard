@@ -43,19 +43,44 @@ cd "/Users/thanatos66/Downloads/Kantamaze 01 - for Content Carousel/dashboard" &
 ⚠️ `CRON_SECRET` เป็น Sensitive = **อ่านกลับไม่ได้** ต้องขอจาก user หรือ rotate ใหม่ + `gh secret set` ให้ตรง
 ✅ ข้อความเรนเดอร์จากข้อมูลจริงแล้ว **3,786 ตัวอักษร · HTML tag ครบ · ลิมิต 4,096** — พอใส่ token ก็ส่งได้เลย
 
-### 2) กราฟ ROAS รายวัน
+### 2) ⭐⭐ อ่าน targeting + งบ จาก Meta ตรง ๆ แทนการเดาจากชื่อ (คุ้มสุดในลิสต์)
+research แล้วว่าทำได้จริง — Meta ให้อ่าน `targeting` / `daily_budget` / `created_time` / `effective_status`
+ที่ระดับ adset (ยืนยันด้วย MCP แล้ว ดู Phase 12 ใน WORKFLOW.md)
+
+**ได้อะไร:** ลบความไม่แน่นอนทั้งก้อน — funnel ไม่ต้องพึ่งวินัยการตั้งชื่อ ·
+`budgetFromName()` + `suggestName()` เลิกจำเป็น (บั๊ก parse ชื่อหายทั้งคลาส) ·
+`activeDays` แม่นขึ้น (ตอนนี้วันที่ใช้งบ ฿0 ไม่ถูกนับเป็นอายุ) ·
+จับ "ค้างชำระ/แอดโดนตีตก" ได้ตรง ๆ (ebook บทที่ 42)
+
+**ต้องแก้:**
+```
+lib/meta.ts     + fetchAdsetMeta(token, accountId) → Map<adsetId, {stage, budget, createdAt, status}>
+                + ใส่ adset_id ใน fields ของ insights (level=ad รองรับอยู่แล้ว)
+lib/types.ts    AdRow + adsetId / funnelReal / budgetReal
+lib/ae.ts       buildAdViews เลือก funnelReal ก่อน แล้วค่อย fallback มา classifyFunnel
+supabase/       ⚠️ ต้อง migration เพิ่มคอลัมน์ (นี่คือส่วนที่เสี่ยงสุด — ต้องรัน SQL เอง)
+```
+**ค่าใช้จ่าย:** +1 API call ต่อบัญชีต่อรอบ sync · payload targeting ใหญ่ (ตัดเก็บเฉพาะที่ใช้)
+**ทางเลี่ยงแบบถูก:** ยังใช้ชื่อเป็นหลักเหมือนเดิม แต่เพิ่ม **audit รายสัปดาห์**
+เทียบ "ชื่อบอกว่าอะไร" กับ "targeting จริง" แล้วขึ้นเตือนเฉพาะตัวที่ชื่อโกหก — ถูกกว่ามากและกัน drift ได้
+
+### 3) จับบัญชีค้างชำระ / แอดโดนตีตก (ถูกและเร็ว)
+`effective_status` มีค่า `PENDING_BILLING_INFO` · `DISAPPROVED` · `WITH_ISSUES`
+ebook บทที่ 42 บอกว่าบัญชีที่ตัดเงินสะดุดจะทำให้ระบบเสียจังหวะแล้วสูบงบ — ตอนนี้ dashboard มองไม่เห็นเลย
+
+### 4) กราฟ ROAS รายวัน
 `series` มี `byGroup` + `byFunnel` (spend) แล้ว — ต้องเพิ่ม **revenue / replies ต่อวัน** ใน `lib/aggregate.ts`
 แล้วต่อเข้า `TrendChart` (รองรับ `dim` + `share` อยู่แล้ว)
 
-### 3) ต่อ Google Sheets (ยอดขายจริง) เข้า dashboard
+### 5) ต่อ Google Sheets (ยอดขายจริง) เข้า dashboard
 ตอนนี้ยังต้องคีย์มือใน 💰 BizPanel · ⚠️ ค่าแอดในชีตยังไม่รวม VAT — ใช้คอลัมน์ "VAT 7%"
 
-### 4) ส่ง offline conversion กลับเข้า Meta
+### 6) ส่ง offline conversion กลับเข้า Meta
 ปิดการขายใน LINE แล้วยอดไม่ถูกส่งกลับ = algorithm optimize หาคนทัก ไม่ใช่คนซื้อ
 → ทุกกติกาใน `ads-maeao-method` ตัดสินจากตัวเลขที่ต่ำกว่าจริง (ดู [[tracking-stack-audit]])
 
-### 5) label ชุด GRD/UNC/AI/A2/1CUT/GPTแฟชั่น (ตามชีต) ยังไม่เข้า dashboard
-### 6) TikTok ยังไม่ได้ต่อ — โค้ดรออยู่ที่ `lib/tiktok.ts` ขาดแค่ token
+### 7) label ชุด GRD/UNC/AI/A2/1CUT/GPTแฟชั่น (ตามชีต) ยังไม่เข้า dashboard
+### 8) TikTok ยังไม่ได้ต่อ — โค้ดรออยู่ที่ `lib/tiktok.ts` ขาดแค่ token
 
 ---
 
