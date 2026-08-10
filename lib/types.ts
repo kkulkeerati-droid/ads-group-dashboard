@@ -88,7 +88,42 @@ export interface TopAd extends Metricized {
 export interface SeriesPoint {
   date: string;
   byGroup: Record<string, number>; // spend ต่อกลุ่มต่อวัน
+  byFunnel?: Record<string, number>; // spend ต่อชั้น funnel ต่อวัน (TOF/MOF/BOF/?)
   demo?: boolean;
+}
+
+// ─── funnel (แกะจากชื่อแอด — ดู lib/ae.ts classifyFunnel) ──────────────
+export interface FunnelTotal extends Metricized {
+  stage: string; // TOF | MOF | BOF | ?
+  label: string;
+  color: string;
+  share: number; // สัดส่วน spend 0..1
+  ads: number;
+  /** ส่วนที่อ่านจาก "ค่าเริ่มต้น" (ชื่อไม่ได้บอกกลุ่ม) — หลักฐานอ่อนกว่าอ่านจากชื่อ */
+  assumedSpend: number;
+  assumedAds: number;
+}
+
+export interface FunnelProductCell { spend: number; share: number; roas: number; ads: number }
+
+export interface FunnelProductRow {
+  product: string;
+  spend: number;
+  roas: number;
+  purchases: number;
+  cells: Record<string, FunnelProductCell>; // key = stage
+  missing: string[]; // ชั้นที่ยังไม่มีงบเลย
+  note: string;
+}
+
+export interface NamingGapRow {
+  adName: string;
+  accountName: string;
+  product: string;
+  spend: number;
+  revenue: number;
+  roas: number;
+  suggested: string | null; // ชื่อที่ควรเปลี่ยนเป็น (ก๊อปไปวางใน Ads Manager ได้เลย)
 }
 
 // มิติวิเคราะห์ content ads (แกะจากชื่อแอด) — มุมคอนเทนต์ / กลุ่มเป้าหมาย
@@ -123,5 +158,8 @@ export interface Metrics extends Metricized {
   accountIssues: AccountIssue[];
   warnings: string[];
   prev?: PrevTotals; // งวดก่อนหน้า (เทียบ)
-  content?: { themes: ContentDim[]; audiences: ContentDim[]; products: ContentDim[] };
+  content?: { themes: ContentDim[]; audiences: ContentDim[]; products: ContentDim[]; funnels: ContentDim[] };
+  funnel?: { rows: FunnelTotal[]; notes: string[] };
+  funnelProducts?: FunnelProductRow[];
+  naming?: { count: number; spend: number; share: number; rows: NamingGapRow[] };
 }

@@ -9,12 +9,15 @@
 //   4) แอดอายุ < 3 วัน = learning ห้ามแตะ
 //   5) ความถี่ขึ้น + ผลตก = ครีเอทีฟล้า ไม่ใช่กลุ่มพัง → เปลี่ยนคอนเทนต์ อย่าเพิ่งปิดกลุ่ม
 
-import { ROAS_SCALE, ROAS_OK, ROAS_BREAKEVEN, MIN_ACTIVE_DAYS, MIN_SPEND_TO_JUDGE } from "./decide";
+import {
+  ROAS_SCALE, ROAS_OK, ROAS_BREAKEVEN,
+  MIN_ACTIVE_DAYS, MIN_SPEND_TO_JUDGE, MIN_DAYS_TO_SCALE, ANT_KILL_BUDGET_SHARE,
+} from "./decide";
 import { parseProduct, parseTheme, parseAudience } from "./content";
 import type { AdRow } from "./types";
 
 // ─── 1) ชั้น funnel — ดูจาก "กลุ่มเป้าหมาย" ในชื่อ ไม่ใช่ objective ────
-// objective (ยอดขาย/Buy/msg) บอกว่าตั้งให้ Meta หาอะไร
+// objective (ยอดขาย/Buy/msg/conv) บอกว่าตั้งให้ Meta หาอะไร
 // แต่ชั้น funnel คือ "ยิงใส่ใคร" — คนละเรื่อง แอดหนึ่งตัวมีได้ทั้งสองอย่าง
 export type Funnel = "TOF" | "MOF" | "BOF" | "?";
 
@@ -25,27 +28,113 @@ export const FUNNEL_LABEL: Record<Funnel, string> = {
   "?": "ยังไม่ระบุกลุ่มในชื่อ",
 };
 
-export function classifyFunnel(adName: string): { stage: Funnel; why: string } {
+/**
+ * sure = ชื่อบอกกลุ่มเป้าหมายไว้จริง ๆ
+ * sure=false = ชื่อไม่ได้บอก แต่ตีความตามค่าเริ่มต้นของบ้าน
+ *   (ยืนยันกับ user 10 ส.ค. 69: แอดที่ชื่อไม่มีคำบอกกลุ่ม = ปล่อยกว้าง/Advantage+ = TOF)
+ *   ยังนับเป็น TOF ในกราฟได้ แต่ต้องขึ้นแผง "ตั้งชื่อไม่ครบ" ให้ทีมไปแก้ชื่อ
+ *   เพราะอ่านจากค่าเริ่มต้น = หลักฐานอ่อนกว่าอ่านจากชื่อ
+ */
+export interface FunnelCall { stage: Funnel; why: string; sure: boolean }
+
+// คำที่แปลว่า "ตัดคนกลุ่มนี้ออก" — ตัดออกแล้วที่เหลือคือคนใหม่ = prospecting
+const EXCLUDE_RE = /\bEX\s?(ALL|AI|\d{1,3}|ซื้อ|ทักซื้อ|ทัก)\b/;
+
+export function classifyFunnel(adName: string): FunnelCall {
   const n = (adName || "").toUpperCase();
 
-  // retarget — ตัวเลขคือจำนวนวันย้อนหลัง ยิ่งสั้นยิ่งร้อน
+  // ── retarget มาก่อนเสมอ ──
+  // ชื่อจริงมีทั้ง RE กับ Ex ปนกัน เช่น "AI/RE180/Exซื้อ/Omni" = ยิงคนอุ่นแต่ตัดคนซื้อแล้วออก
+  // ถ้าเช็ค Ex ก่อนจะกลายเป็น TOF ผิดทั้งแถบ
   const re = n.match(/\bRE\s?(\d{1,3})\b/);
   if (re) {
     const days = parseInt(re[1], 10);
     return days <= 90
-      ? { stage: "BOF", why: `RE${days} — คนที่เพิ่งมีปฏิสัมพันธ์ใน ${days} วัน` }
-      : { stage: "MOF", why: `RE${days} — คนอุ่นย้อนหลัง ${days} วัน` };
+      ? { stage: "BOF", why: `RE${days} — คนที่เพิ่งมีปฏิสัมพันธ์ใน ${days} วัน`, sure: true }
+      : { stage: "MOF", why: `RE${days} — คนอุ่นย้อนหลัง ${days} วัน`, sure: true };
   }
-  if (/\bRERUN\b|\bRE\b/.test(n)) return { stage: "MOF", why: "retarget (ไม่ระบุช่วงวัน)" };
+  if (/\bRERUN\b|\bRE\b/.test(n)) return { stage: "MOF", why: "retarget (ไม่ระบุช่วงวัน)", sure: true };
 
-  // prospecting
-  if (/\bLAL\b|LAL\s?\d/.test(n)) return { stage: "TOF", why: "Lookalike — คนคล้ายลูกค้า ยังไม่เคยรู้จักเรา" };
-  if (/\bAW\b/.test(n)) return { stage: "TOF", why: "Broad / Advantage+ — ปล่อยให้ Meta หาเอง" };
-  if (/\bEXALL\b|EX\s?ALL/.test(n)) return { stage: "TOF", why: "ตัดคนที่เคยซื้อออก = ล่าคนใหม่ล้วน" };
-  if (/\bENG\b|ส่วนร่วม/.test(n)) return { stage: "TOF", why: "แอดปั้นยอดมีส่วนร่วม — เติมคนเข้าถังบนสุด" };
-  if (/\bVIEW\b|วิว/.test(n)) return { stage: "TOF", why: "แอดยอดวิว — เติมคนดูไว้ retarget ทีหลัง" };
+  // ── prospecting ──
+  if (/\bLAL\b|LAL\s?\d/.test(n)) return { stage: "TOF", why: "Lookalike — คนคล้ายลูกค้า ยังไม่เคยรู้จักเรา", sure: true };
+  if (/\bAW\b/.test(n)) return { stage: "TOF", why: "Broad / Advantage+ — ปล่อยให้ Meta หาเอง", sure: true };
+  if (EXCLUDE_RE.test(n)) {
+    const tag = n.match(EXCLUDE_RE)![0].replace(/\s/g, "");
+    return { stage: "TOF", why: `${tag} — ตัดคนที่เคยมีปฏิสัมพันธ์ออก = ล่าคนใหม่ล้วน`, sure: true };
+  }
+  if (/ลูกค้าใหม่/.test(adName)) return { stage: "TOF", why: "ระบุในชื่อว่ายิงหาลูกค้าใหม่", sure: true };
+  // ยืนยันกับ user แล้ว: ส่วนร่วม/ENG = objective "ส่วนร่วม → สนทนา" ที่ยิงกว้าง ไม่ใช่ custom audience
+  if (/\bENG\b|ส่วนร่วม|ENGAGE/.test(n)) return { stage: "TOF", why: "แคมเปญส่วนร่วม → สนทนา ยิงกว้าง — เติมคนเข้าถังบนสุด", sure: true };
+  // ยืนยันกับ user แล้ว: "view msg" ที่ไม่มี RE = ยิงกว้างหาคนดูใหม่ (ตัวที่ retarget จะเขียน RE ต่อท้าย)
+  if (/\bVIEW\b|วิว/.test(n)) return { stage: "TOF", why: "แอดยอดวิว ยิงกว้าง — เติมคนดูไว้ retarget ทีหลัง", sure: true };
 
-  return { stage: "?", why: "ชื่อไม่ได้บอกกลุ่มเป้าหมาย — เดาไม่ได้ว่าอยู่ชั้นไหน" };
+  // ── ชื่อไม่ได้บอกกลุ่มเลย ──
+  // ยืนยันกับ user 10 ส.ค. 69: แอดพวกนี้ตั้ง targeting เป็นปล่อยกว้าง/Advantage+ = TOF
+  // แต่ติดธง sure=false ไว้ เพราะอ่านจากค่าเริ่มต้น ไม่ได้อ่านจากชื่อ
+  return {
+    stage: "TOF",
+    why: "ชื่อไม่มีคำบอกกลุ่ม — ตีเป็นปล่อยกว้าง/Advantage+ ตามค่าเริ่มต้นของบ้าน (ควรใส่ AW ในชื่อ)",
+    sure: false,
+  };
+}
+
+// ─── 1.5) มาตรฐานชื่อ — ใช้ทั้งตอนตรวจและตอนเสนอชื่อใหม่ ───────────────
+export const AUDIENCE_TOKENS = ["AW", "LAL", "LAL1-3%", "LAL2-3%", "ExAll", "Ex180", "Exซื้อ", "ENG", "VIEW", "RE7", "RE30", "RE60", "RE180", "RE365"] as const;
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** งบต่อวันที่ทีมเขียนไว้ในชื่อ เช่น "AI/AW/600/12Jul" → 600 · "500 > 700" → 700 (ตัวล่าสุด) */
+export function budgetFromName(adName: string): number | null {
+  const n = adName || "";
+  // ตัดคำที่มีตัวเลขแต่ไม่ใช่งบออกก่อน (RE180 / LAL1-3% / วันที่ / เวลา clone)
+  const cleaned = n
+    .replace(/\bRE\s?\d{1,3}\b/gi, " ")
+    .replace(/\bEX\s?\d{1,3}\b/gi, " ")
+    .replace(/\bLAL\s?\d(-\d)?%?/gi, " ")
+    .replace(/\d{4}-\d{2}-\d{2}/g, " ")
+    .replace(/\d{1,2}\s?(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[A-Za-z]*/gi, " ");
+  const nums = [...cleaned.matchAll(/(?<![\d.%])(\d{2,5})(?![\d.%])/g)].map((m) => parseInt(m[1], 10));
+  const plausible = nums.filter((v) => v >= 30 && v <= 99999);
+  return plausible.length ? plausible[plausible.length - 1] : null;
+}
+
+/** วันที่ในชื่อ เช่น "12Jul" / "04 AUG" / "19JULY" → "12Jul" */
+export function dateFromName(adName: string): string | null {
+  const m = (adName || "").match(/\b(\d{1,2})\s?(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[A-Za-z]*/i);
+  if (!m) return null;
+  const mon = MONTHS.find((x) => x.toLowerCase() === m[2].toLowerCase())!;
+  return `${parseInt(m[1], 10)}${mon}`;
+}
+
+/**
+ * ชื่อที่ควรเปลี่ยนเป็น — ให้ทีมก๊อปไปวางใน Ads Manager ได้เลย
+ * หลักคือ "แก้ให้น้อยที่สุด" — แค่แทรกคำบอกกลุ่มเข้าไป ของเดิมไม่หาย
+ * (มาตรฐานเต็มอยู่ใน docs/AD-NAMING.md)
+ */
+export function suggestName(adName: string, token = "AW"): string | null {
+  const name = (adName || "").trim();
+  if (!name) return null;
+  if (classifyFunnel(name).sure) return null; // อ่านออกอยู่แล้ว ไม่ต้องแก้
+
+  // ตัดหางที่ Meta เติมเองออกก่อน (สำเนา / Clone 2026-08-08 1013) แล้วค่อยต่อกลับ
+  const tailMatch = name.match(/\s*(?:[-–]\s*สำเนา|Clone\s+\d{4}-\d{2}-\d{2}[\s\d]*)\s*$/i);
+  const tail = tailMatch ? tailMatch[0] : "";
+  const core = tail ? name.slice(0, name.length - tail.length) : name;
+
+  const parts = core.split("/");
+  if (parts.length >= 2) {
+    // มีรูปแบบ slash อยู่แล้ว → แทรกเป็นช่องที่ 2 (ตำแหน่งกลุ่มเป้าหมายตามมาตรฐาน)
+    return [parts[0].trim(), token, ...parts.slice(1).map((p) => p.trim())].filter(Boolean).join("/") + tail;
+  }
+
+  // ชื่อแบบเว้นวรรค (เช่น "1 cut ยอดขาย ซื้อ - 700 19JULY") → แทรกหลังคำนำหน้า
+  // ⚠️ ต้อง "ไม่ทิ้งข้อความเดิม" — ถ้าประกอบใหม่จากงบ+วันที่อย่างเดียว
+  //    ชื่อ 2 ตัวที่ต่างกันจะกลายเป็นชื่อเดียวกัน แล้ว upsert ใน lib/supabase.ts
+  //    จะรวมแถวเป็นแอดเดียว = ข้อมูลเพี้ยน
+  const m = core.match(/^\s*(1\s*cut|1\s*c\.?c\.?|grd|unc|gpt\S*|a2|ai|au2|ap2|rerun)\b/i);
+  const head = m ? m[0].trim() : core.split(/\s+/)[0];
+  const rest = core.slice(m ? m[0].length : head.length).trim();
+  return [head, token, rest].filter(Boolean).join("/") + tail;
 }
 
 // วัตถุประสงค์ (แกนคนละเส้นกับ funnel)
@@ -91,8 +180,10 @@ function seal(s: Slice, dayCount: number): Slice {
 export interface AdView {
   adName: string; accountName: string; accountId: string;
   product: string; theme: string; audience: string;
-  funnel: Funnel; funnelWhy: string; objective: string;
+  funnel: Funnel; funnelWhy: string; funnelSure: boolean; objective: string;
   isClone: boolean; parent: string | null; bumps: number;
+  /** งบต่อวันที่เขียนไว้ในชื่อ (null = ชื่อไม่ได้บอก) */
+  budget: number | null;
   all: Slice; recent: Slice; prior: Slice;
   firstSeen: string; lastSeen: string; activeDays: number;
 }
@@ -120,8 +211,9 @@ export function buildAdViews(rows: AdRow[], until: string, recentDays = 3, prior
       v = {
         adName: r.adName, accountName: r.accountName, accountId: r.accountId,
         product: parseProduct(r.adName), theme: parseTheme(r.adName), audience: parseAudience(r.adName),
-        funnel: f.stage, funnelWhy: f.why, objective: classifyObjective(r.adName),
+        funnel: f.stage, funnelWhy: f.why, funnelSure: f.sure, objective: classifyObjective(r.adName),
         isClone: c.isClone, parent: c.parent, bumps: budgetBumps(r.adName),
+        budget: budgetFromName(r.adName),
         all: emptySlice(), recent: emptySlice(), prior: emptySlice(),
         firstSeen: r.date || "", lastSeen: r.date || "", activeDays: 0,
         _d: new Set<string>(), _rd: new Set<string>(), _pd: new Set<string>(),
@@ -192,18 +284,48 @@ export function costIsStable(v: AdView): { stable: boolean; why: string } {
     : { stable: false, why: `ต้นทุนต่อออเดอร์ยังแกว่ง ฿${Math.round(a)}→฿${Math.round(b)} (${(drift * 100).toFixed(0)}%)` };
 }
 
+// ─── 4.7) สเกลผ่านหรือไม่ผ่าน — วัดที่ "กำไรหลังค่าแอดต่อวัน" ไม่ใช่ ROAS ──
+// จาก ebook แม่เอ บทที่ 31: สเกลผ่าน = ยิง 1,600 กำไร 1,000 → ยิง 3,200 กำไร 1,500
+//                          สเกลไม่ผ่าน = ยิง 3,200 แล้วกำไรเหลือ 500
+// ROAS ลดตอนสเกลเป็นเรื่องปกติ — ตัวที่ต้องดูคือเงินที่เข้ากระเป๋าต่อวัน
+export interface ScaleCheck { state: "grew" | "shrank" | "flat" | "unknown"; passed: boolean | null; why: string }
+
+export function scaleVerdict(v: AdView): ScaleCheck {
+  const r = v.recent, p = v.prior;
+  if (!r.days || !p.days || p.spend < 200 || r.spend < 200)
+    return { state: "unknown", passed: null, why: "ข้อมูลยังไม่พอเทียบก่อน/หลัง" };
+  const spendR = r.spend / r.days, spendP = p.spend / p.days;
+  const profitR = (r.revenue - r.spend) / r.days, profitP = (p.revenue - p.spend) / p.days;
+  const B = (n: number) => "฿" + Math.round(n).toLocaleString("th-TH");
+  const move = `${B(spendP)}→${B(spendR)}/วัน`;
+  const gain = `กำไรหลังค่าแอด ${B(profitP)}→${B(profitR)}/วัน`;
+
+  if (spendR > spendP * 1.25) {
+    // เผื่อ 10% — กำไรขยับลงนิดเดียวยังไม่นับว่าสเกลไม่ผ่าน (เลขรายวันเหวี่ยงเป็นปกติ)
+    const floor = profitP >= 0 ? profitP * 0.9 : profitP * 1.1;
+    const passed = profitR >= floor;
+    return {
+      state: "grew", passed,
+      why: passed ? `สเกลผ่าน — ดันงบ ${move} แล้ว${gain}` : `สเกลไม่ผ่าน — ดันงบ ${move} แต่${gain}`,
+    };
+  }
+  if (spendR < spendP * 0.75) return { state: "shrank", passed: null, why: `งบลดลง ${move} · ${gain}` };
+  return { state: "flat", passed: null, why: `งบใกล้เคียงเดิม ${move} · ${gain}` };
+}
+
 // ─── 5) พรุ่งนี้ทำอะไรกับแอดตัวนี้ ────────────────────────────────────
-export type AeAction = "SCALE" | "CLONE" | "KEEP" | "REDUCE" | "STOP" | "NEW_CREATIVE" | "FIX_TRACKING" | "WAIT";
+export type AeAction = "SCALE" | "CLONE" | "KEEP" | "REDUCE" | "STOP" | "NEW_CREATIVE" | "FIX_OFFER" | "FIX_TRACKING" | "WAIT";
 
 export const ACTION_META: Record<AeAction, { icon: string; label: string; order: number }> = {
   STOP:        { icon: "🔴", label: "หยุด",          order: 1 },
   REDUCE:      { icon: "🟠", label: "ลดงบ",          order: 2 },
   NEW_CREATIVE:{ icon: "🎬", label: "เปลี่ยนคอนเทนต์", order: 3 },
-  FIX_TRACKING:{ icon: "⚫", label: "เช็คการนับยอด",   order: 4 },
-  CLONE:       { icon: "🧬", label: "แตกตัวใหม่",     order: 5 },
-  SCALE:       { icon: "🟢", label: "เพิ่มงบ 20%",    order: 6 },
-  KEEP:        { icon: "🔵", label: "ปล่อยไว้",       order: 7 },
-  WAIT:        { icon: "⏳", label: "ยังไม่แตะ",      order: 8 },
+  FIX_OFFER:   { icon: "💬", label: "แก้ข้อเสนอ/แชท", order: 4 },
+  FIX_TRACKING:{ icon: "⚫", label: "เช็คการนับยอด",   order: 5 },
+  CLONE:       { icon: "🧬", label: "แตกตัวใหม่",     order: 6 },
+  SCALE:       { icon: "🟢", label: "เพิ่มงบ 20%",    order: 7 },
+  KEEP:        { icon: "🔵", label: "ปล่อยไว้",       order: 8 },
+  WAIT:        { icon: "⏳", label: "ยังไม่แตะ",      order: 9 },
 };
 
 export interface AeCall { action: AeAction; why: string; how: string; money: number }
@@ -239,6 +361,16 @@ export function callFor(
         ? "ตัวนี้เคยทำเงินได้ดี ถ้าปิดโดยไม่ตั้งใจให้เปิดกลับ"
         : "ไม่ต้องทำอะไร — แค่อย่าลืมว่ามันเคยกินงบไปเท่านี้" };
   }
+  // ── กติกาแอดมด (ebook บทที่ 34): กินงบเกิน 30% ของงบวันแล้วยังไม่มีการซื้อ = คัดตัวตายออก ──
+  // ใช้ได้เฉพาะตัวที่เขียนงบไว้ในชื่อ (เช่น "AI/AW/600/12Jul") — ตัวที่ไม่ได้เขียนก็ข้ามไป
+  // ต้องเช็คก่อน MIN_SPEND_TO_JUDGE เพราะแอดมดงบ ฿300/วัน จะไม่มีวันถึง ฿300 ใน 1 วัน
+  const antKill = v.budget ? v.budget * ANT_KILL_BUDGET_SHARE : 0;
+  if (antKill && a.purchases === 0 && a.spend >= antKill && ctx.peerHasRevenue && v.activeDays >= 1) {
+    return { action: "STOP", money: a.spend,
+      why: `งบในชื่อ ${M(v.budget!)}/วัน · ใช้ไป ${M(a.spend)} แล้วยังไม่มีออเดอร์สักรายการ`,
+      how: `กติกาแอดมด: เกิน ${Math.round(ANT_KILL_BUDGET_SHARE * 100)}% ของงบวันแล้วยังไม่มีการซื้อ = ปิดก่อน · ให้แอดมินลากแชตกระตุ้นปิดการขาย ถ้ามียอดเข้าค่อยเปิดกลับ` };
+  }
+
   if (a.spend < MIN_SPEND_TO_JUDGE) {
     return { action: "WAIT", money: 0,
       why: `ใช้ยังไม่ถึง ${M(MIN_SPEND_TO_JUDGE)} (${M(a.spend)} ใน ${v.activeDays} วัน)`,
@@ -260,6 +392,15 @@ export function callFor(
         why: `ทัก ${a.results} คน ไม่มีใครกลับมาตอบสักคน`,
         how: "คนที่ยิงไปเจอไม่ใช่กลุ่มที่สนใจ — ปิด แล้วเอางบไปตัวที่ยังตอบ" };
     }
+    // ── มีคนกลับมาคุยแล้วแต่ยังไม่ซื้อ = ยังไม่ใช่เรื่องของแอด ──
+    // สูตรตัดสินใจของแม่เอ: คนไม่ทัก → ปิดได้ · ทักแต่ไม่อ่าน → ปิดได้
+    //   แต่ "ทัก + กลับมาคุย + ยังไม่ซื้อ" → ห้ามปิด ให้ไปแก้โปร/สคริปต์ขาย/การตอบแชท/การติดตามก่อน
+    // (แอดหาคนถูกกลุ่มแล้ว — ที่พังคือขั้นปิดการขาย ปิดแอดทิ้งคือทิ้งคนที่คุยอยู่)
+    if (a.replies > 0) {
+      return { action: "FIX_OFFER", money: a.spend,
+        why: `คนกลับมาคุย ${a.replies} คน (${M(a.cpReply)}/คน) แต่ยังไม่มีใครซื้อ — แอดหาคนถูกแล้ว ที่ยังไม่ผ่านคือขั้นปิดการขาย`,
+        how: "อย่าเพิ่งปิด — ไล่ตามลำดับ: โปรโมชั่น/ข้อเสนอ → สคริปต์ขาย → ความเร็วตอบแชท → การติดตามลูกค้า · แก้ทีละอย่าง" };
+    }
     return { action: "STOP", money: a.spend,
       why: `ใช้ ${M(a.spend)} ยอดขาย ๐ ทั้งที่ตัวอื่นในกลุ่มขายได้`,
       how: "ปิด — ระบบนับยอดใช้ได้ แปลว่าตัวนี้ขายไม่ออกจริง" };
@@ -267,6 +408,17 @@ export function callFor(
 
   const roas = v.recent.spend > 200 ? v.recent.roas : a.roas; // มีข้อมูลสดพอก็ใช้ตัวสด
   const label = v.recent.spend > 200 ? "3 วันล่าสุด" : "ทั้งช่วง";
+  const scaled = scaleVerdict(v);
+
+  // ── เพิ่งดันงบไปแล้วกำไรต่อวันหดลง = สเกลไม่ผ่าน ให้ถอยงบกลับ ──
+  // (ebook บทที่ 31/44) เช็คก่อนบันได ROAS เพราะ ROAS ยังอาจดูดีอยู่ทั้งที่กำไรหด
+  // แต่ถ้ายังอยู่เหนือเส้นสเกล ไม่ถอยงบ — แค่ห้ามเติมเพิ่ม (ไปโผล่ที่ชั้นล่างแทน)
+  const scaleFailed = scaled.state === "grew" && scaled.passed === false;
+  if (scaleFailed && roas >= ROAS_BREAKEVEN && roas < ROAS_SCALE) {
+    return { action: "REDUCE", money: a.spend,
+      why: `${scaled.why} (ROAS ${roas.toFixed(2)})`,
+      how: "ถอยงบกลับระดับเดิม แล้วอยู่ตรงนั้น 2-3 วันให้ต้นทุนต่อออเดอร์นิ่งก่อน · อยากโตกว่านี้ให้แตกตัวใหม่แทนการอัดตัวเดิม" };
+  }
 
   // ขาดทุน
   if (roas < ROAS_BREAKEVEN) {
@@ -298,7 +450,7 @@ export function callFor(
       how: "ปล่อยงบเท่าเดิม อย่าเพิ่งเติม ดูอีก 2-3 วัน" };
   }
 
-  // ── ผ่านเส้นสเกลแล้ว แต่ยังต้องผ่านบันไดออเดอร์ก่อน ──
+  // ── ผ่านเส้นสเกลแล้ว แต่ยังต้องผ่านบันไดออเดอร์ + บันไดวันก่อน ──
   // กติกาแม่เอ: "อย่าสเกลเพราะ ROAS สวย แต่เพิ่งขายได้ 2 ออเดอร์"
   // ROAS 5 จากออเดอร์เดียว = ความบังเอิญ ไม่ใช่หลักฐานว่าระบบหาคนซื้อซ้ำได้
   const orders = a.purchases;
@@ -306,6 +458,16 @@ export function callFor(
     return { action: "KEEP", money: 0,
       why: `ROAS ${roas.toFixed(2)} สวย แต่เพิ่งได้ ${orders} ออเดอร์ — ยังไม่ใช่หลักฐาน`,
       how: `ปล่อยงบเท่าเดิมให้ถึง ${ORDERS_ANALYZE} ออเดอร์ก่อน แล้วค่อยดู · ROAS จากออเดอร์ไม่กี่รายการเหวี่ยงง่ายมาก` };
+  }
+
+  // ── "แอดติดหลอก" (ebook บทที่ 55): ดี 3 วันยังสอบไม่ผ่าน ──
+  // ช่วงแรก AI เก็บ "ลูกค้าร้อน" ที่ตอบสนองง่ายสุดก่อน ตัวเลขเลยสวยผิดปกติ
+  // พอวันที่ 4-5 ระบบเริ่มขยายหาคนใหม่ ถ้าคอนเทนต์ไม่แข็งพอ ยอดตกทันที
+  // → พ้น 3 วันแตะได้แล้ว แต่ "เพิ่มงบ" ต้องรอให้ยืนระยะครบ 5 วันก่อน
+  if (v.activeDays < MIN_DAYS_TO_SCALE) {
+    return { action: "KEEP", money: 0,
+      why: `ROAS ${roas.toFixed(2)} · ${orders} ออเดอร์ แต่เพิ่งยิงมา ${v.activeDays} วัน`,
+      how: `ดี 3 วันยังไม่ใช่หลักฐาน — ระบบเพิ่งเก็บลูกค้าร้อนที่หาง่ายสุด · รอให้ยืนได้ครบ ${MIN_DAYS_TO_SCALE} วันค่อยเพิ่มงบ ระหว่างนี้เตรียมคอนเทนต์ชุดใหม่ไว้` };
   }
 
   const stable = costIsStable(v);
@@ -326,6 +488,13 @@ export function callFor(
         : `ยังมีแค่ ${orders} ออเดอร์ — โคลนได้แต่ทีละตัว อย่าแตกรัว รอให้ถึง ${ORDERS_SCALE} ออเดอร์ค่อยแตกเป็นกอง` };
   }
 
+  // เพิ่งดันงบไปแล้วกำไรต่อวันยังไม่โตตาม → อย่าเติมซ้ำ (ต่อให้ ROAS ยังเหนือเส้นสเกล)
+  if (scaleFailed) {
+    return { action: "KEEP", money: 0,
+      why: `ROAS ${roas.toFixed(2)} ยังเหนือเส้นสเกล แต่${scaled.why}`,
+      how: "อย่าเติมงบซ้ำ — รอบที่แล้วดันแล้วกำไรต่อวันยังไม่โตตาม · ปล่อยงบเท่านี้ 2-3 วันให้นิ่งก่อน หรือแตกตัวใหม่ไปกลุ่มอื่นแทน" };
+  }
+
   // ต้นทุนยังแกว่ง = ระบบยังไม่นิ่ง → ห้ามเพิ่มงบ (เงื่อนไขที่ 1 ของแม่เอ)
   if (!stable.stable) {
     return { action: "KEEP", money: 0,
@@ -334,45 +503,129 @@ export function callFor(
   }
 
   return { action: "SCALE", money: a.revenue - a.spend,
-    why: `ROAS ${roas.toFixed(2)} (${label}) · ${orders} ออเดอร์ · ${stable.why}`,
+    why: `ROAS ${roas.toFixed(2)} (${label}) · ${orders} ออเดอร์ · ยืนมา ${v.activeDays} วัน · ${stable.why}${scaled.state === "grew" && scaled.passed ? ` · ${scaled.why}` : ""}`,
     how: orders >= ORDERS_SCALE
       ? "เพิ่มงบ +20% แล้วอย่าแตะอีก 2-3 วัน · อยากโตเร็วกว่านี้ให้โคลนเพิ่มแทนการอัดตัวเดิม"
       : `เพิ่มงบ +20% แล้วอย่าแตะอีก 2-3 วัน · ถึง ${ORDERS_SCALE} ออเดอร์ค่อยสเกลจริงจัง` };
 }
 
 // ─── 6) สมดุล funnel ทั้งบัญชี ────────────────────────────────────────
-export interface FunnelRow { stage: Funnel; label: string; spend: number; share: number; revenue: number; roas: number; ads: number }
+export interface FunnelRow {
+  stage: Funnel; label: string; spend: number; share: number;
+  revenue: number; roas: number; ads: number;
+  results: number; replies: number; purchases: number;
+  /** ส่วนที่อ่านจาก "ค่าเริ่มต้น" ไม่ได้อ่านจากชื่อ — หลักฐานอ่อนกว่า */
+  assumedSpend: number; assumedAds: number;
+}
+
+const emptyFunnelAcc = () => ({ spend: 0, revenue: 0, ads: 0, results: 0, replies: 0, purchases: 0, assumedSpend: 0, assumedAds: 0 });
 
 export function funnelBreakdown(views: AdView[]): { rows: FunnelRow[]; notes: string[] } {
-  const acc = new Map<Funnel, { spend: number; revenue: number; ads: number }>();
-  for (const s of ["TOF", "MOF", "BOF", "?"] as Funnel[]) acc.set(s, { spend: 0, revenue: 0, ads: 0 });
+  const acc = new Map<Funnel, ReturnType<typeof emptyFunnelAcc>>();
+  for (const s of ["TOF", "MOF", "BOF", "?"] as Funnel[]) acc.set(s, emptyFunnelAcc());
   let total = 0;
   for (const v of views) {
     const a = acc.get(v.funnel)!;
     a.spend += v.all.spend; a.revenue += v.all.revenue; a.ads++;
+    a.results += v.all.results; a.replies += v.all.replies; a.purchases += v.all.purchases;
+    if (!v.funnelSure) { a.assumedSpend += v.all.spend; a.assumedAds++; }
     total += v.all.spend;
   }
   const rows: FunnelRow[] = (["TOF", "MOF", "BOF", "?"] as Funnel[])
     .map((stage) => {
       const a = acc.get(stage)!;
-      return { stage, label: FUNNEL_LABEL[stage], spend: a.spend, share: total ? a.spend / total : 0,
-        revenue: a.revenue, roas: a.spend ? a.revenue / a.spend : 0, ads: a.ads };
+      return {
+        stage, label: FUNNEL_LABEL[stage], spend: a.spend, share: total ? a.spend / total : 0,
+        revenue: a.revenue, roas: a.spend ? a.revenue / a.spend : 0, ads: a.ads,
+        results: a.results, replies: a.replies, purchases: a.purchases,
+        assumedSpend: a.assumedSpend, assumedAds: a.assumedAds,
+      };
     })
     .filter((r) => r.spend > 0);
 
   const get = (s: Funnel) => rows.find((r) => r.stage === s)?.share || 0;
   const notes: string[] = [];
-  const unknown = get("?");
-  if (unknown > 0.25)
-    notes.push(`งบ ${(unknown * 100).toFixed(0)}% อยู่ในแอดที่ชื่อไม่บอกกลุ่มเป้าหมาย — อ่าน funnel ไม่ออก ตั้งชื่อให้มี AW/LAL/RE180 จะวิเคราะห์ได้ทันที`);
-  const tof = get("TOF"), warm = get("MOF") + get("BOF");
+
+  // งบที่ "อ่านจากค่าเริ่มต้น" ไม่ได้อ่านจากชื่อ — ยิ่งเยอะ ยิ่งเชื่อ ROAS รายชั้นได้น้อย
+  const assumed = rows.reduce((s, r) => s + r.assumedSpend, 0);
+  const assumedShare = total ? assumed / total : 0;
+  if (assumedShare > 0.25)
+    notes.push(`งบ ${(assumedShare * 100).toFixed(0)}% อยู่ในแอดที่ชื่อไม่บอกกลุ่มเป้าหมาย — ตอนนี้นับเป็น TOF ตามค่าเริ่มต้น (ปล่อยกว้าง) แต่ยังพิสูจน์จากชื่อไม่ได้ · ใส่ AW/LAL/RE180 ในชื่อแล้ว ROAS รายชั้นจะเชื่อได้จริง`);
+
+  const tof = get("TOF"), warm = get("MOF") + get("BOF"), bof = get("BOF");
   if (tof > 0 && tof < 0.35)
     notes.push(`งบหาคนใหม่ (TOF) แค่ ${(tof * 100).toFixed(0)}% — ถังคนอุ่นจะแห้งในไม่กี่สัปดาห์ ควรดันขึ้นราว 40-50%`);
   if (warm > 0 && warm < 0.15)
     notes.push(`งบตามคนอุ่น (MOF+BOF) แค่ ${(warm * 100).toFixed(0)}% — คนที่ทักแล้วไม่ซื้อกำลังหลุดมือฟรี ๆ`);
   if (warm > 0.6)
     notes.push(`งบ ${(warm * 100).toFixed(0)}% ไปกองที่คนอุ่น — กำลังขุดถังเดิมซ้ำ ROAS จะดูดีตอนนี้แต่ตันแน่`);
+  if (warm > 0.1 && bof <= 0.02)
+    notes.push(`แทบไม่มีชั้น BOF (คนใกล้ซื้อ · RE7-RE60) เลย — คนที่เพิ่งทักเมื่อ 1-2 สัปดาห์ก่อนคือกลุ่มที่ปิดง่ายที่สุดในบ้าน`);
+
   return { rows, notes };
+}
+
+// ─── 6.5) แผง "แอดที่ตั้งชื่อไม่ครบ" ──────────────────────────────────
+export interface NamingGap {
+  adName: string; accountName: string; product: string;
+  spend: number; revenue: number; roas: number;
+  suggested: string | null;
+}
+
+/** เรียงตามงบมากไปน้อย — ทีมเห็นทันทีว่าแก้ตัวไหนก่อนได้ผลที่สุด */
+export function namingGaps(views: AdView[]): { rows: NamingGap[]; spend: number; share: number } {
+  const total = views.reduce((s, v) => s + v.all.spend, 0);
+  const rows = views
+    .filter((v) => !v.funnelSure && v.all.spend > 0)
+    .sort((a, b) => b.all.spend - a.all.spend)
+    .map((v) => ({
+      adName: v.adName, accountName: v.accountName, product: v.product,
+      spend: Math.round(v.all.spend * 100) / 100,
+      revenue: Math.round(v.all.revenue * 100) / 100,
+      roas: v.all.spend ? Math.round((v.all.revenue / v.all.spend) * 100) / 100 : 0,
+      suggested: suggestName(v.adName),
+    }));
+  const spend = rows.reduce((s, r) => s + r.spend, 0);
+  return { rows, spend: Math.round(spend * 100) / 100, share: total ? spend / total : 0 };
+}
+
+// ─── 6.6) funnel × สินค้า — เห็นว่าสินค้าไหนขาดชั้นไหน ────────────────
+export interface FunnelByProductRow {
+  product: string; spend: number; roas: number; purchases: number;
+  cells: Record<Funnel, { spend: number; share: number; roas: number; ads: number }>;
+  missing: Funnel[]; note: string;
+}
+
+export function funnelByProduct(views: AdView[]): FunnelByProductRow[] {
+  const byProd = new Map<string, AdView[]>();
+  for (const v of views) {
+    if (v.all.spend <= 0) continue;
+    const list = byProd.get(v.product);
+    if (list) list.push(v); else byProd.set(v.product, [v]);
+  }
+  const stages: Funnel[] = ["TOF", "MOF", "BOF"];
+  const out: FunnelByProductRow[] = [];
+  for (const [product, list] of byProd) {
+    const spend = list.reduce((s, v) => s + v.all.spend, 0);
+    const revenue = list.reduce((s, v) => s + v.all.revenue, 0);
+    const purchases = list.reduce((s, v) => s + v.all.purchases, 0);
+    const cells = {} as FunnelByProductRow["cells"];
+    for (const st of ["TOF", "MOF", "BOF", "?"] as Funnel[]) {
+      const g = list.filter((v) => v.funnel === st);
+      const gs = g.reduce((s, v) => s + v.all.spend, 0);
+      const gr = g.reduce((s, v) => s + v.all.revenue, 0);
+      cells[st] = { spend: gs, share: spend ? gs / spend : 0, roas: gs ? gr / gs : 0, ads: g.length };
+    }
+    const missing = stages.filter((st) => cells[st].spend <= 0);
+    const hasLAL = list.some((v) => /LAL/i.test(v.adName));
+    const note = missing.length === 0
+      ? "ครบทั้ง 3 ชั้น"
+      : purchases >= 20 && !hasLAL && missing.includes("TOF")
+        ? `ซื้อแล้ว ${purchases} ราย แต่ยังไม่มีท่อหาคนใหม่ — เอา list คนซื้อไปทำ LAL 1-3%`
+        : `ยังไม่มีชั้น ${missing.join(" / ")}`;
+    out.push({ product, spend, roas: spend ? revenue / spend : 0, purchases, cells, missing, note });
+  }
+  return out.sort((a, b) => b.spend - a.spend);
 }
 
 // ─── 7) สัญญาณคอนเทนต์รายสินค้า ──────────────────────────────────────
@@ -491,4 +744,88 @@ export function cloneChecks(views: AdView[]): CloneCheck[] {
     }
   }
   return out;
+}
+
+// ─── 10) แตกเกินโควตา + แคมเปญแย่งลูกค้ากันเอง ────────────────────────
+// ebook แม่เอ บทที่ 50: "1 ต้นฉบับ + โคลน 1-3 ตัว = จุดที่กำลังสวยที่สุด"
+//   เกินกว่านั้น Facebook มองว่าสินค้าเดียวกัน คอนเทนต์เดียวกัน กลุ่มเดียวกัน → แย่งกันกินเอง
+// ตัวชี้ขาดไม่ใช่ผลรายตัว แต่คือ "ใช้เงินเพิ่มแล้วยอดรวมเพิ่มด้วยไหม"
+export const MAX_CLONES_PER_PARENT = 3;
+
+export interface CloneFamily { parent: string; clones: number; spend: number; revenue: number; roas: number; over: boolean }
+
+export function cloneFamilies(views: AdView[]): CloneFamily[] {
+  const fam = new Map<string, { clones: number; spend: number; revenue: number }>();
+  for (const v of views) {
+    if (!v.isClone || !v.parent) continue;
+    const f = fam.get(v.parent) || { clones: 0, spend: 0, revenue: 0 };
+    f.clones++; f.spend += v.all.spend; f.revenue += v.all.revenue;
+    fam.set(v.parent, f);
+  }
+  return [...fam.entries()]
+    .map(([parent, f]) => ({
+      parent, clones: f.clones, spend: f.spend, revenue: f.revenue,
+      roas: f.spend ? f.revenue / f.spend : 0, over: f.clones > MAX_CLONES_PER_PARENT,
+    }))
+    .sort((a, b) => b.clones - a.clones || b.spend - a.spend);
+}
+
+/** สินค้าที่ "ใช้เงินเพิ่มแต่ยอดรวมไม่เพิ่ม" = กำลังแบ่งเงินก้อนเดิมออกไปหลายทาง */
+export interface Cannibal { product: string; spendBefore: number; spendAfter: number; revBefore: number; revAfter: number; ads: number; why: string }
+
+export function cannibalCheck(views: AdView[]): Cannibal[] {
+  const byProd = new Map<string, AdView[]>();
+  for (const v of views) {
+    if (v.all.spend <= 0) continue;
+    const l = byProd.get(v.product);
+    if (l) l.push(v); else byProd.set(v.product, [v]);
+  }
+  const out: Cannibal[] = [];
+  for (const [product, list] of byProd) {
+    const rD = list.reduce((m, v) => Math.max(m, v.recent.days), 0);
+    const pD = list.reduce((m, v) => Math.max(m, v.prior.days), 0);
+    if (!rD || !pD) continue;
+    const sBefore = list.reduce((s, v) => s + v.prior.spend, 0) / pD;
+    const sAfter = list.reduce((s, v) => s + v.recent.spend, 0) / rD;
+    const rBefore = list.reduce((s, v) => s + v.prior.revenue, 0) / pD;
+    const rAfter = list.reduce((s, v) => s + v.recent.revenue, 0) / rD;
+    if (sBefore < 300 || sAfter <= sBefore * 1.2) continue; // ไม่ได้ใช้เงินเพิ่มอย่างมีนัย
+    if (rAfter > rBefore * 1.05) continue; // ยอดรวมโตตาม = สเกลจริง
+    const B = (n: number) => "฿" + Math.round(n).toLocaleString("th-TH");
+    out.push({
+      product, spendBefore: sBefore, spendAfter: sAfter, revBefore: rBefore, revAfter: rAfter,
+      ads: list.length,
+      why: `ค่าแอด ${B(sBefore)}→${B(sAfter)}/วัน แต่ยอดขาย ${B(rBefore)}→${B(rAfter)}/วัน — ใช้เงินเพิ่มแล้วยอดรวมไม่โต`,
+    });
+  }
+  return out.sort((a, b) => b.spendAfter - a.spendAfter);
+}
+
+// ─── 11) สัญญาณระดับกระดาน — "ลากแอด" ก่อนสั่งปิดรัว ──────────────────
+// ebook แม่เอ บทที่ 41: ROAS ดิ่งพร้อมกันทั้งกระดานทั้งที่แชทยังเข้าปกติ
+//   = ยอดขายยังไม่ถูกดึงกลับเข้าระบบ ไม่ใช่แอดพังทีละตัว
+//   ท่าที่ถูกคือ ปิดหยุดเลือด → ระดมปิดการขาย → รอ ROAS ฟื้น → ค่อยเปิด
+export interface BoardSignal { wobble: boolean; headline: string; detail: string }
+
+export function boardSignal(views: AdView[]): BoardSignal {
+  const sum = (pick: (v: AdView) => Slice) => views.reduce(
+    (t, v) => { const s = pick(v); t.spend += s.spend; t.revenue += s.revenue; t.results += s.results; t.replies += s.replies; return t; },
+    { spend: 0, revenue: 0, results: 0, replies: 0 }
+  );
+  const r = sum((v) => v.recent), p = sum((v) => v.prior);
+  const rDays = views.reduce((m, v) => Math.max(m, v.recent.days), 0) || 1;
+  const pDays = views.reduce((m, v) => Math.max(m, v.prior.days), 0) || 1;
+  if (p.spend < 1000 || r.spend < 1000) return { wobble: false, headline: "", detail: "" };
+
+  const roasR = r.spend ? r.revenue / r.spend : 0;
+  const roasP = p.spend ? p.revenue / p.spend : 0;
+  const repliesR = r.replies / rDays, repliesP = p.replies / pDays;
+  // ROAS ทั้งกระดานร่วง >30% แต่คนกลับมาคุยยังไม่ตก = คนยังเข้ามา แต่ยอดไม่เข้าระบบ
+  const wobble = roasP > 0 && roasR < roasP * 0.7 && repliesR >= repliesP * 0.85;
+  if (!wobble) return { wobble: false, headline: "", detail: "" };
+  return {
+    wobble: true,
+    headline: `ทั้งกระดานร่วงพร้อมกัน — ROAS ${roasP.toFixed(2)} → ${roasR.toFixed(2)} แต่คนกลับมาคุยยังเท่าเดิม (${Math.round(repliesP)}→${Math.round(repliesR)} คน/วัน)`,
+    detail: "คนยังเข้ามาปกติ แปลว่ายอดขายน่าจะยังไม่ถูกดึงกลับเข้าระบบ มากกว่าที่แอดจะพังทีละตัว · ทำ \"ลากแอด\" ก่อนสั่งปิดรัว: ปิดตัวที่เลือดไหลแรงสุดหยุดเลือด → ระดมปิดการขาย/ตอบแชทค้าง/โทรยืนยันออเดอร์ → ดูว่า ROAS ฟื้นไหม → ค่อยเปิดกลับ (กู้ได้ใน 1-2 ชม. เปิดงบเดิม · นานกว่านั้นลดงบ 30-50%)",
+  };
 }

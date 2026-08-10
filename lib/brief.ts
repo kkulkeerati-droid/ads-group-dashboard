@@ -8,9 +8,11 @@
 //    ถ้าเอา ROAS ตอนบ่ายมาสั่งปิด จะปิดตัวที่กำลังจะทำเงินตอนกลางคืนทิ้ง
 
 import {
-  buildAdViews, callFor, fatigueOf, funnelBreakdown, contentSignals, audienceTodos, cloneChecks,
-  ACTION_META, FUNNEL_LABEL,
-  type AdView, type AeAction, type AeCall, type FunnelRow, type ContentSignal, type CloneCheck,
+  buildAdViews, callFor, fatigueOf, funnelBreakdown, funnelByProduct, namingGaps,
+  contentSignals, audienceTodos, cloneChecks, cloneFamilies, cannibalCheck, boardSignal,
+  ACTION_META, FUNNEL_LABEL, MAX_CLONES_PER_PARENT,
+  type AdView, type AeAction, type AeCall, type FunnelRow, type FunnelByProductRow,
+  type NamingGap, type ContentSignal, type CloneCheck, type CloneFamily, type Cannibal, type BoardSignal,
 } from "./ae";
 import { ROAS_SCALE } from "./decide";
 import type { AdRow } from "./types";
@@ -33,10 +35,14 @@ export interface Brief {
   moneySaved: number;   // เงินที่หยุดไหลออกถ้าทำตาม "หยุด/ลดงบ"
   moneyUpside: number;  // กำไรหลังค่าแอดของตัวที่สั่งเพิ่มงบ
   funnel: { rows: FunnelRow[]; notes: string[] };
+  funnelByProduct: FunnelByProductRow[];
   content: ContentSignal[];
   audience: string[];
   clones: { adName: string; parent: string; verdict: string; why: string }[];
-  unnamed: { count: number; spend: number };
+  cloneFamilies: CloneFamily[];   // ตัวแม่ที่แตกเกิน 3 ตัว
+  cannibal: Cannibal[];           // สินค้าที่ใช้เงินเพิ่มแต่ยอดรวมไม่โต
+  board: BoardSignal;             // ทั้งกระดานร่วงพร้อมกัน → ลากแอดก่อนปิดรัว
+  unnamed: { count: number; spend: number; share: number; rows: NamingGap[] };
   churn: { stopped: number; spend: number; wasted: number }; // แอดที่หยุดไปแล้วในช่วงนี้
 }
 
@@ -107,13 +113,17 @@ export function buildBrief(opts: {
   const moneyUpside = items.filter((i) => i.action === "SCALE").reduce((s, i) => s + Math.max(0, i.money), 0);
 
   const funnel = funnelBreakdown(withSpend);
+  const byProduct = funnelByProduct(withSpend);
   const content = contentSignals(withSpend);
   const audience = audienceTodos(withSpend);
   const clones = cloneChecks(withSpend)
     .filter((c) => c.verdict !== "keep")
     .map((c) => ({ adName: c.clone.adName, parent: c.parent.adName, verdict: c.verdict, why: c.why }));
-  const unnamedList = withSpend.filter((v) => v.funnel === "?");
-  const unnamed = { count: unnamedList.length, spend: r2(unnamedList.reduce((s, v) => s + v.all.spend, 0)) };
+  const families = cloneFamilies(withSpend).filter((f) => f.over);
+  const cannibal = cannibalCheck(withSpend);
+  const board = boardSignal(withSpend);
+  const gaps = namingGaps(withSpend);
+  const unnamed = { count: gaps.rows.length, spend: gaps.spend, share: r2(gaps.share), rows: gaps.rows };
 
   // แอดที่หยุดไปแล้วในช่วง 7 วัน — เยอะผิดปกติ = เปิด-ปิดถี่เกิน ไม่มีตัวไหนได้พ้น learning
   const stoppedList = withSpend.filter((v) => v.lastSeen < weekUntil);
@@ -128,7 +138,10 @@ export function buildBrief(opts: {
   const stops = items.filter((i) => i.action === "STOP");
   const scales = items.filter((i) => i.action === "SCALE");
   const clonesTodo = items.filter((i) => i.action === "CLONE");
-  const headline = stops.length
+  // ทั้งกระดานร่วงพร้อมกันแต่คนยังคุยเท่าเดิม = เรื่องระบบ/ยอดยังไม่เข้า มาก่อนทุกคำสั่งรายตัว
+  const headline = board.wobble
+    ? `ทำ "ลากแอด" ก่อน — ${board.headline}`
+    : stops.length
     ? `พรุ่งนี้เช้าปิด ${stops.length} ตัวก่อน — หยุดเงินไหลออก ${M(moneySaved)}${scales.length ? ` แล้วเอางบไป ${scales[0].adName}` : ""}`
     : scales.length
       ? `พรุ่งนี้ดันงบ ${scales.length} ตัวที่ ROAS ผ่าน ${ROAS_SCALE} (+20% ต่อตัว)`
@@ -145,7 +158,8 @@ export function buildBrief(opts: {
             results: week.results, replies: week.replies, replyRate: week.replyRate, purchases: week.purchases,
             convRate: week.convRate, cpReply: week.cpReply },
     headline, items, moneySaved: r2(moneySaved), moneyUpside: r2(moneyUpside),
-    funnel, content, audience, clones, unnamed, churn,
+    funnel, funnelByProduct: byProduct, content, audience,
+    clones, cloneFamilies: families, cannibal, board, unnamed, churn,
   };
 }
 
@@ -166,6 +180,7 @@ export function briefToTelegram(b: Brief, link?: string): string {
   L.push(`<b>📋 สรุปบ่าย ${b.date} · แผนพรุ่งนี้</b>`);
   L.push("");
   L.push(`👉 <b>${esc(b.headline)}</b>`);
+  if (b.board.wobble) L.push(`<i>${esc(b.board.detail)}</i>`);
   L.push("");
 
   L.push(`<b>วันนี้ถึงตอนนี้</b>${b.dayComplete ? "" : " <i>(ยังไม่จบวัน)</i>"}`);
@@ -183,7 +198,7 @@ export function briefToTelegram(b: Brief, link?: string): string {
   L.push(`ตอบจริง ${b.week.replies}/${b.week.results} (${b.week.replyRate.toFixed(0)}%) · ปิด ${b.week.convRate.toFixed(1)}%`);
 
   // สั่งงานรายตัว — โชว์เฉพาะกลุ่มที่ต้องลงมือ
-  const groups: [AeAction, number][] = [["STOP", 4], ["REDUCE", 3], ["NEW_CREATIVE", 3], ["CLONE", 2], ["SCALE", 3], ["FIX_TRACKING", 2]];
+  const groups: [AeAction, number][] = [["STOP", 4], ["REDUCE", 3], ["NEW_CREATIVE", 3], ["FIX_OFFER", 3], ["CLONE", 2], ["SCALE", 3], ["FIX_TRACKING", 2]];
   for (const [act, cap] of groups) {
     const g = b.items.filter((i) => i.action === act);
     if (!g.length) continue;
@@ -230,6 +245,28 @@ export function briefToTelegram(b: Brief, link?: string): string {
     for (const n of b.funnel.notes.slice(0, 2)) L.push(`• ${esc(n)}`);
   }
 
+  if (b.unnamed.count > 0) {
+    L.push("");
+    L.push(`<b>🏷️ แอดที่ตั้งชื่อไม่ครบ (${b.unnamed.count} ตัว · ${money(b.unnamed.spend)} = ${(b.unnamed.share * 100).toFixed(0)}% ของงบ)</b>`);
+    for (const g of b.unnamed.rows.slice(0, 3))
+      L.push(`• ${esc(g.adName)} → <b>${esc(g.suggested || "")}</b> <i>(${money(g.spend)})</i>`);
+    if (b.unnamed.rows.length > 3) L.push(`  <i>… อีก ${b.unnamed.rows.length - 3} ตัว ดูรายการเต็มบนเว็บ</i>`);
+  }
+
+  if (b.cannibal.length) {
+    L.push("");
+    L.push("<b>⚔️ ใช้เงินเพิ่มแต่ยอดรวมไม่โต (แคมเปญแย่งกันเอง)</b>");
+    for (const c of b.cannibal.slice(0, 2)) L.push(`• <b>${esc(c.product)}</b> — ${esc(c.why)}`);
+    L.push("<i>หยุดแตกตัวเพิ่ม แล้วคัดให้เหลือแต่ตัวที่ทำกำไร</i>");
+  }
+
+  if (b.cloneFamilies.length) {
+    L.push("");
+    L.push(`<b>🧬 แตกเกิน ${MAX_CLONES_PER_PARENT} ตัวต่อตัวแม่</b>`);
+    for (const f of b.cloneFamilies.slice(0, 2))
+      L.push(`• ${esc(f.parent)} — โคลน ${f.clones} ตัว (${money(f.spend)} · ROAS ${f.roas.toFixed(2)})`);
+  }
+
   if (b.churn.stopped >= 10) {
     L.push("");
     L.push(`<b>♻️ เปิด-ปิดถี่</b> — 7 วันนี้หยุดไป <b>${b.churn.stopped} ตัว</b> กินงบ ${money(b.churn.spend)}${b.churn.wasted > 0 ? ` (ในนั้นยอด ๐ ${money(b.churn.wasted)})` : ""}`);
@@ -248,8 +285,16 @@ export function briefToTelegram(b: Brief, link?: string): string {
     for (const c of b.clones.slice(0, 3)) L.push(`• ${esc(c.adName)} — ${esc(c.why)}`);
   }
 
-  if (link) { L.push(""); L.push(`<a href="${link}">เปิดดูฉบับเต็ม →</a>`); }
-
-  const out = L.join("\n");
-  return out.length > 3900 ? out.slice(0, 3899) + "…" : out;
+  // ── ตัดให้พอดีลิมิต Telegram โดย "ตัดทีละบรรทัด" ไม่ใช่ตัดกลางข้อความ ──
+  // ถ้าตัดกลาง tag HTML (เช่น <b>ชื่อแอ) Telegram จะตอบ 400 แล้วไม่ส่งเลยทั้งข้อความ
+  // ทุกบรรทัดในนี้ปิด tag ในตัวเอง → ตัดทั้งบรรทัดจึงปลอดภัยเสมอ
+  // บรรทัดท้าย ๆ = เรื่องสำคัญน้อยสุด (clone/กลุ่มเป้าหมาย) เลยยอมให้หายก่อน
+  const LIMIT = 3900;
+  const tail = link ? `\n\n<a href="${link}">เปิดดูฉบับเต็ม →</a>` : "";
+  const CUT_NOTE = "\n<i>… ตัดเพราะยาวเกินลิมิต Telegram — ดูฉบับเต็มบนเว็บ</i>";
+  if (L.join("\n").length + tail.length <= LIMIT) return L.join("\n") + tail;
+  const cut = [...L];
+  while (cut.length && cut.join("\n").length + CUT_NOTE.length + tail.length > LIMIT) cut.pop();
+  while (cut.length && cut[cut.length - 1].trim() === "") cut.pop();
+  return cut.join("\n") + CUT_NOTE + tail;
 }

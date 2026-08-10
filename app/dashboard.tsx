@@ -131,8 +131,8 @@ const adGetVal = (a: TopAd, key: string): number | string => {
 export default function Dashboard() {
   const [platform, setPlatform] = useState<"all" | "meta" | "tiktok">("all");
   const [preset, setPreset] = useState("last_14d");
-  const [cardView, setCardViewRaw] = useState<"group" | "product">("group");
-  const setCardView = (v: "group" | "product") => { setCardViewRaw(v); try { localStorage.setItem("cardView", v); } catch {} };
+  const [cardView, setCardViewRaw] = useState<"group" | "product" | "funnel">("group");
+  const setCardView = (v: "group" | "product" | "funnel") => { setCardViewRaw(v); try { localStorage.setItem("cardView", v); } catch {} };
   const [customSince, setCustomSince] = useState("");
   const [customUntil, setCustomUntil] = useState("");
   const [metric, setMetric] = useState<MetricKey>("spend");
@@ -166,7 +166,7 @@ export default function Dashboard() {
     if (p === "all" || p === "meta" || p === "tiktok") setPlatform(p);
     if (pr) setPreset(pr);
     const cv = localStorage.getItem("cardView");
-    if (cv === "product" || cv === "group") setCardViewRaw(cv);
+    if (cv === "product" || cv === "group" || cv === "funnel") setCardViewRaw(cv);
     const qs2 = u.searchParams.get("since");
     const qu2 = u.searchParams.get("until");
     if (qs2 && qu2) { setCustomSince(qs2); setCustomUntil(qu2); }
@@ -481,6 +481,9 @@ export default function Dashboard() {
               <div className="seg">
                 <button className={cardView === "group" ? "active" : ""} onClick={() => setCardView("group")}>กลุ่ม (prefix)</button>
                 <button className={cardView === "product" ? "active" : ""} onClick={() => setCardView("product")}>สินค้า</button>
+                {data.funnel && data.funnel.rows.length > 0 && (
+                  <button className={cardView === "funnel" ? "active" : ""} onClick={() => setCardView("funnel")}>ชั้น funnel</button>
+                )}
               </div>
             </div>
           )}
@@ -491,7 +494,18 @@ export default function Dashboard() {
               <div className="v">{showVal((data as any)[metric] || 0)}</div>
               <div className="m"><Delta cur={(data as any)[metric] || 0} prev={(data.prev as any)?.[metric]} lowerBetter={mMeta.lowerBetter} /> {data.accounts.length} บัญชี · {mMeta.label}</div>
             </div>
-            {cardView === "product" && data.content?.products
+            {cardView === "funnel" && data.funnel
+              ? data.funnel.rows.map((r) => (
+                  <div className="card" key={r.stage} style={{ ["--c" as any]: r.color }}>
+                    <div className="k"><span className="dot" />{r.label}</div>
+                    <div className={"v " + (metric === "roas" ? roasStatus(r.roas) : "")}>{showVal((r as any)[metric] ?? r.spend)}</div>
+                    <div className="m">
+                      ฿{nInt(r.spend)} · {(r.share * 100).toFixed(0)}% · {r.ads} ads · ROAS {r.roas ? r.roas.toFixed(2) : "–"}
+                      {r.assumedAds > 0 && <> · <span className="warn-inline">ชื่อไม่บอกกลุ่ม {r.assumedAds} ตัว</span></>}
+                    </div>
+                  </div>
+                ))
+              : cardView === "product" && data.content?.products
               ? data.content.products.map((p, i) => (
                   <div className="card" key={p.key} style={{ ["--c" as any]: PRODUCT_COLORS[i % PRODUCT_COLORS.length] }}>
                     <div className="k"><span className="dot" />{p.key}</div>
@@ -526,6 +540,14 @@ export default function Dashboard() {
           </div>
 
           <TrendChart data={data} groups={groups} />
+
+          {/* 🔺 funnel — งบกองอยู่ชั้นไหน · สินค้าไหนขาดชั้นไหน · ใครยังตั้งชื่อไม่ครบ */}
+          <FunnelPanel data={data} />
+          {data.funnel && data.funnel.rows.length > 0 && (
+            <TrendChart data={data} groups={data.funnel.rows.map((r) => ({ key: r.stage, label: r.label, color: r.color }))} dim="funnel" share />
+          )}
+          <FunnelProductPanel data={data} />
+          <NamingPanel data={data} />
 
           <div className="panel">
             <h2>แยกรายบัญชี<span className="hint">{data.accounts.length} บัญชี · spend ต่อกลุ่ม · คลิกหัวคอลัมน์เพื่อเรียง</span></h2>
@@ -792,15 +814,32 @@ function BizPanel({ spend, results, since, until, readOnly }: { spend: number; r
 }
 
 // ─── กราฟเทรนด์ stacked area ต่อวัน ─────────────────────────────────
-function TrendChart({ data, groups }: { data: Metrics; groups: any[] }) {
-  const series = data.series || [];
-  if (series.length === 0) return null;
+// dim = "group" (กลุ่มตาม prefix) หรือ "funnel" (ชั้น TOF/MOF/BOF)
+// โหมด funnel มี share=true → โชว์เป็น % ของวัน เพื่อให้เห็นว่า "เดือนนี้เอียงไปทางไหน"
+// (ถ้าโชว์เป็นบาท วันที่ใช้งบเยอะจะกลบภาพสัดส่วนหมด)
+function TrendChart({ data, groups, dim = "group", share = false }: { data: Metrics; groups: any[]; dim?: "group" | "funnel"; share?: boolean }) {
+  const raw = data.series || [];
+  if (raw.length === 0) return null;
+  const pick = (p: any) => (dim === "funnel" ? p.byFunnel || {} : p.byGroup || {});
+  if (dim === "funnel" && !raw.some((p) => p.byFunnel && Object.keys(p.byFunnel).length)) return null;
+
+  const keys = groups.map((g) => g.key);
+  // โหมดสัดส่วน: normalize แต่ละวันให้รวมเป็น 100
+  const series = share
+    ? raw.map((p) => {
+        const src = pick(p);
+        const tot = keys.reduce((s, k) => s + (src[k] || 0), 0);
+        const out: Record<string, number> = {};
+        for (const k of keys) out[k] = tot ? ((src[k] || 0) / tot) * 100 : 0;
+        return { ...p, _v: out };
+      })
+    : raw.map((p) => ({ ...p, _v: pick(p) }));
+
   const W = 960, H = 250, padL = 44, padR = 14, padT = 14, padB = 26;
   const innerW = W - padL - padR;
   const innerH = H - padT - padB;
   const n = series.length;
-  const keys = groups.map((g) => g.key);
-  const totals = series.map((p) => keys.reduce((s, k) => s + (p.byGroup[k] || 0), 0));
+  const totals = series.map((p) => keys.reduce((s, k) => s + (p._v[k] || 0), 0));
   const max = Math.max(1, ...totals);
   const X = (i: number) => (n === 1 ? padL + innerW / 2 : padL + (i / (n - 1)) * innerW);
   const Y = (v: number) => padT + innerH - (v / max) * innerH;
@@ -809,7 +848,7 @@ function TrendChart({ data, groups }: { data: Metrics; groups: any[] }) {
   const cum = new Array(n).fill(0);
   const layers = keys.map((k) => {
     const lower = [...cum];
-    for (let i = 0; i < n; i++) cum[i] += series[i].byGroup[k] || 0;
+    for (let i = 0; i < n; i++) cum[i] += series[i]._v[k] || 0;
     const upper = [...cum];
     const g = groups.find((x) => x.key === k);
     let area = `M ${X(0)} ${Y(upper[0])}`;
@@ -822,17 +861,22 @@ function TrendChart({ data, groups }: { data: Metrics; groups: any[] }) {
   });
 
   const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => ({ v: max * f, y: Y(max * f) }));
-  const fmtK = (v: number) => (v >= 1000 ? (v / 1000).toFixed(1) + "k" : String(Math.round(v)));
+  const fmtK = (v: number) => (share ? Math.round(v) + "%" : v >= 1000 ? (v / 1000).toFixed(1) + "k" : String(Math.round(v)));
   const xticks = n > 1 ? [0, Math.floor((n - 1) / 2), n - 1] : [0];
+  const uid = dim + (share ? "-s" : "");
 
   return (
     <div className="panel">
-      <h2>เทรนด์รายวัน · ค่าใช้จ่าย{data.series[0]?.demo && <span className="hint">demo — ประมาณจากยอดรวม (live = รายวันจริง)</span>}</h2>
+      <h2>
+        {dim === "funnel" ? "สัดส่วน funnel รายวัน" : "เทรนด์รายวัน · ค่าใช้จ่าย"}
+        {dim === "funnel" && <span className="hint">% ของงบแต่ละวัน — เห็นว่าช่วงนี้เอียงไปหาคนใหม่หรือขุดถังเดิม</span>}
+        {raw[0]?.demo && <span className="hint">demo — ประมาณจากยอดรวม (live = รายวันจริง)</span>}
+      </h2>
       <div className="tbl-scroll">
-        <svg viewBox={`0 0 ${W} ${H}`} className="trend" role="img" aria-label="กราฟเทรนด์ค่าใช้จ่ายรายวันแยกกลุ่ม">
+        <svg viewBox={`0 0 ${W} ${H}`} className="trend" role="img" aria-label={dim === "funnel" ? "กราฟสัดส่วนชั้น funnel รายวัน" : "กราฟเทรนด์ค่าใช้จ่ายรายวันแยกกลุ่ม"}>
           <defs>
             {layers.map((l) => (
-              <linearGradient id={`g-${l.k}`} key={l.k} x1="0" y1="0" x2="0" y2="1">
+              <linearGradient id={`g-${uid}-${l.k}`} key={l.k} x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor={l.color} stopOpacity="0.45" />
                 <stop offset="100%" stopColor={l.color} stopOpacity="0.05" />
               </linearGradient>
@@ -844,9 +888,9 @@ function TrendChart({ data, groups }: { data: Metrics; groups: any[] }) {
               <text className="axis" x={padL - 7} y={t.y + 3.5} textAnchor="end">{fmtK(t.v)}</text>
             </g>
           ))}
-          {layers.map((l) => <path key={l.k} d={l.area} fill={`url(#g-${l.k})`} />)}
+          {layers.map((l) => <path key={l.k} d={l.area} fill={`url(#g-${uid}-${l.k})`} />)}
           {layers.map((l) => <path key={l.k + "L"} d={l.line} fill="none" stroke={l.color} strokeWidth={1.6} strokeLinejoin="round" />)}
-          <circle className="endpt" cx={X(n - 1)} cy={Y(totals[n - 1])} r={4} fill="var(--accent)" />
+          {!share && <circle className="endpt" cx={X(n - 1)} cy={Y(totals[n - 1])} r={4} fill="var(--accent)" />}
           {xticks.map((i) => (
             <text key={i} className="axis" x={X(i)} y={H - 7} textAnchor={i === 0 ? "start" : i === n - 1 ? "end" : "middle"}>
               {series[i].date?.slice(5)}
@@ -860,6 +904,184 @@ function TrendChart({ data, groups }: { data: Metrics; groups: any[] }) {
         ))}
         <span className="leg-dates">{series[0]?.date} → {series[series.length - 1]?.date}</span>
       </div>
+    </div>
+  );
+}
+
+// ─── 🔺 แผง funnel — งบกองอยู่ชั้นไหน ────────────────────────────────
+// ชั้น funnel = "ยิงใส่ใคร" (คนใหม่ / คนอุ่น / คนใกล้ซื้อ) แกะจากชื่อแอด
+// ส่วนที่ทึบ = ชื่อบอกกลุ่มไว้จริง · ส่วนลายทาง = ชื่อไม่ได้บอก ตีเป็นปล่อยกว้างตามค่าเริ่มต้น
+function FunnelPanel({ data }: { data: Metrics }) {
+  const f = data.funnel;
+  if (!f || f.rows.length === 0) return null;
+  const rows = f.rows;
+  const maxShare = Math.max(...rows.map((r) => r.share), 0.01);
+  const W = 720, rowH = 54, gap = 10;
+  const H = rows.length * (rowH + gap);
+  const wOf = (s: number) => Math.max(90, (s / maxShare) * (W - 40));
+
+  return (
+    <div className="panel">
+      <h2>
+        🔺 งบกองอยู่ชั้นไหนของ funnel
+        <span className="hint">แกะจากกลุ่มเป้าหมายในชื่อแอด · ลายทาง = ชื่อไม่ได้บอกกลุ่ม (ตีเป็นปล่อยกว้าง)</span>
+      </h2>
+      <div className="tbl-scroll">
+        <svg viewBox={`0 0 ${W} ${H}`} className="funnel-svg" role="img" aria-label="สัดส่วนงบตามชั้น funnel">
+          <defs>
+            <pattern id="fn-assumed" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+              <rect width="6" height="6" fill="rgba(148,163,184,0.18)" />
+              <line x1="0" y1="0" x2="0" y2="6" stroke="rgba(148,163,184,0.75)" strokeWidth="2" />
+            </pattern>
+          </defs>
+          {rows.map((r, i) => {
+            const w = wOf(r.share);
+            const x = (W - w) / 2;
+            const y = i * (rowH + gap);
+            const aw = r.spend > 0 ? (r.assumedSpend / r.spend) * w : 0;
+            return (
+              <g key={r.stage}>
+                <rect x={x} y={y} width={w} height={rowH} rx={8} fill={r.color} fillOpacity={0.9} />
+                {aw > 1 && <rect x={x + w - aw} y={y} width={aw} height={rowH} rx={8} fill="url(#fn-assumed)" />}
+                <text x={x + 12} y={y + 22} className="fn-lbl">{r.label}</text>
+                <text x={x + 12} y={y + 41} className="fn-sub">
+                  ฿{nInt(r.spend)} · {(r.share * 100).toFixed(0)}% · {r.ads} ads · ROAS {r.roas ? r.roas.toFixed(2) : "–"}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+      <div className="tbl-scroll">
+        <table className="mini">
+          <thead>
+            <tr><th>ชั้น</th><th>งบ</th><th>สัดส่วน</th><th>ทัก</th><th>ตอบจริง</th><th>ออเดอร์</th><th>ROAS</th><th>ads</th><th>อ่านจากชื่อไม่ได้</th></tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.stage}>
+                <td className="name-cell"><span className="dot" style={{ background: r.color }} /> {r.label}</td>
+                <td>฿{nInt(r.spend)}</td>
+                <td>{(r.share * 100).toFixed(0)}%</td>
+                <td>{nInt(r.results)}</td>
+                <td className={r.replies ? "good" : ""}>{nInt(r.replies)}</td>
+                <td>{nInt(r.purchases)}</td>
+                <td className={roasStatus(r.roas)}>{r.roas ? r.roas.toFixed(2) : "–"}</td>
+                <td>{r.ads}</td>
+                <td className={r.assumedSpend > 0 ? "warn" : ""}>{r.assumedSpend > 0 ? `฿${nInt(r.assumedSpend)} · ${r.assumedAds} ads` : "–"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {f.notes.map((n, i) => <div className="warn" key={i}>{n}</div>)}
+    </div>
+  );
+}
+
+// ─── 🔀 funnel × สินค้า — สินค้าไหนขาดชั้นไหน ─────────────────────────
+function FunnelProductPanel({ data }: { data: Metrics }) {
+  const rows = data.funnelProducts || [];
+  const stages = data.funnel?.rows.map((r) => r.stage) || [];
+  if (rows.length === 0 || stages.length === 0) return null;
+  const colorOf = (st: string) => data.funnel?.rows.find((r) => r.stage === st)?.color || "#94a3b8";
+  const labelOf = (st: string) => data.funnel?.rows.find((r) => r.stage === st)?.label || st;
+
+  return (
+    <div className="panel">
+      <h2>🔀 funnel × สินค้า<span className="hint">ช่องว่าง = สินค้านั้นยังไม่มีท่อในชั้นนั้นเลย</span></h2>
+      <div className="tbl-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>สินค้า</th>
+              <th>งบ</th>
+              <th>ROAS</th>
+              {stages.map((st) => <th key={st} title={labelOf(st)}>{st}</th>)}
+              <th style={{ minWidth: 200 }}>ต้องเติมอะไร</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((p) => (
+              <tr key={p.product}>
+                <td className="name-cell">{p.product}</td>
+                <td><strong>฿{nInt(p.spend)}</strong></td>
+                <td className={roasStatus(p.roas)}>{p.roas ? p.roas.toFixed(2) : "–"}</td>
+                {stages.map((st) => {
+                  const c = p.cells[st];
+                  if (!c || c.spend <= 0) return <td key={st} className="bad">ไม่มี</td>;
+                  return (
+                    <td key={st} title={`฿${nInt(c.spend)} · ${c.ads} ads · ROAS ${c.roas.toFixed(2)}`}>
+                      <div className="cell-bar"><span style={{ width: `${Math.min(100, c.share * 100)}%`, background: colorOf(st) }} /></div>
+                      <small>{(c.share * 100).toFixed(0)}% · {c.roas ? c.roas.toFixed(2) : "–"}</small>
+                    </td>
+                  );
+                })}
+                <td className={p.missing.length ? "warn" : ""}>{p.note}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ─── 🏷️ แอดที่ตั้งชื่อไม่ครบ + ชื่อที่ควรเปลี่ยนเป็น ──────────────────
+function NamingPanel({ data }: { data: Metrics }) {
+  const [all, setAll] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
+  const n = data.naming;
+  if (!n || n.count === 0) return null;
+  const rows = all ? n.rows : n.rows.slice(0, 15);
+  const copy = (s: string) => {
+    navigator.clipboard?.writeText(s).then(() => { setCopied(s); setTimeout(() => setCopied(null), 1500); }).catch(() => {});
+  };
+
+  return (
+    <div className="panel">
+      <h2>
+        🏷️ แอดที่ตั้งชื่อไม่ครบ
+        <span className="hint">{n.count} ตัว · ฿{nInt(n.spend)} = {(n.share * 100).toFixed(0)}% ของงบ · เรียงตามงบมากไปน้อย</span>
+      </h2>
+      <div className="warn">
+        ชื่อพวกนี้บอกแค่ <b>วัตถุประสงค์</b> (ยอดขาย/Buy/msg/conv) ไม่ได้บอก <b>กลุ่มเป้าหมาย</b> —
+        ตอนนี้นับเป็น TOF ตามค่าเริ่มต้น (ปล่อยกว้าง/Advantage+) แต่พิสูจน์จากชื่อไม่ได้
+        · เปลี่ยนชื่อตามคอลัมน์ขวาแล้ว ROAS รายชั้นจะเชื่อได้จริง
+      </div>
+      <div className="tbl-scroll">
+        <table>
+          <thead>
+            <tr><th>ชื่อตอนนี้</th><th>บัญชี</th><th>สินค้า</th><th>งบ</th><th>ROAS</th><th style={{ minWidth: 240 }}>ชื่อที่ควรเปลี่ยนเป็น</th></tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.accountName + r.adName}>
+                <td className="name-cell">{r.adName}</td>
+                <td>{r.accountName}</td>
+                <td>{r.product}</td>
+                <td><strong>฿{nInt(r.spend)}</strong></td>
+                <td className={roasStatus(r.roas)}>{r.roas ? r.roas.toFixed(2) : "–"}</td>
+                <td className="name-cell">
+                  {r.suggested ? (
+                    <>
+                      <code>{r.suggested}</code>{" "}
+                      <button className="mini-btn no-print" onClick={() => copy(r.suggested!)}>
+                        {copied === r.suggested ? "ก๊อปแล้ว ✓" : "ก๊อป"}
+                      </button>
+                    </>
+                  ) : "–"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {n.rows.length > 15 && (
+        <button className="mini-btn no-print" onClick={() => setAll(!all)}>
+          {all ? "ย่อ" : `ดูทั้งหมด ${n.rows.length} ตัว`}
+        </button>
+      )}
     </div>
   );
 }

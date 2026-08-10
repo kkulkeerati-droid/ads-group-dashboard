@@ -2,13 +2,14 @@
 
 import { useEffect, useState } from "react";
 import type { Brief, BriefItem } from "@/lib/brief";
+import { ACTION_META, type AeAction } from "@/lib/ae";
 
 const money = (n: number) => "฿" + Math.round(n || 0).toLocaleString("th-TH");
 const int = (n: number) => (n || 0).toLocaleString("th-TH", { maximumFractionDigits: 0 });
 
 // สีของแต่ละคำสั่ง — ใช้ชุดเดียวกับธงบนหน้าหลัก
 const CLS: Record<string, string> = {
-  STOP: "bad", REDUCE: "poor", NEW_CREATIVE: "warn", FIX_TRACKING: "fix",
+  STOP: "bad", REDUCE: "poor", NEW_CREATIVE: "warn", FIX_OFFER: "warn", FIX_TRACKING: "fix",
   CLONE: "good", SCALE: "good", KEEP: "", WAIT: "",
 };
 
@@ -61,7 +62,11 @@ export default function BriefView() {
   if (err) return <div className="wrap"><div className="warn">❌ {err}</div></div>;
   if (!b) return <div className="wrap"><div className="loading">กำลังโหลด…</div></div>;
 
-  const order = ["STOP", "REDUCE", "NEW_CREATIVE", "FIX_TRACKING", "CLONE", "SCALE"];
+  // ไล่ลำดับจาก ACTION_META โดยตรง — เพิ่มคำสั่งใหม่ใน lib/ae.ts แล้วหน้านี้ขึ้นเอง
+  // (เคยพลาด: ลิสต์ hardcode ไว้ พอเพิ่ม FIX_OFFER แล้วมันหายไปเงียบ ๆ)
+  const order = (Object.keys(ACTION_META) as AeAction[])
+    .filter((a) => a !== "KEEP" && a !== "WAIT")
+    .sort((x, y) => ACTION_META[x].order - ACTION_META[y].order);
   const groups = order.map((a) => b.items.filter((i) => i.action === a)).filter((g) => g.length);
   const parked = b.items.filter((i) => i.action === "KEEP" || i.action === "WAIT");
 
@@ -86,6 +91,14 @@ export default function BriefView() {
         <span className="reco-title">🎯 ทำก่อน</span>
         <span style={{ fontWeight: 700 }}>{b.headline}</span>
       </div>
+
+      {/* ทั้งกระดานร่วงพร้อมกันแต่คนยังคุยเท่าเดิม = ยอดยังไม่เข้าระบบ ไม่ใช่แอดพังทีละตัว */}
+      {b.board?.wobble && (
+        <div className="warn issue">
+          🩸 <strong>{b.board.headline}</strong>
+          <div style={{ marginTop: 6 }}>{b.board.detail}</div>
+        </div>
+      )}
 
       {!b.dayComplete && (
         <div className="warn">
@@ -149,7 +162,7 @@ export default function BriefView() {
         <h2>🔺 สมดุล funnel<span className="hint">แบ่งจากกลุ่มเป้าหมายในชื่อแอด ไม่ใช่วัตถุประสงค์</span></h2>
         <div className="tbl-scroll">
           <table>
-            <thead><tr><th>ชั้น</th><th>ค่าแอด</th><th>สัดส่วน</th><th>ยอดขาย</th><th>ROAS</th><th>จำนวนแอด</th></tr></thead>
+            <thead><tr><th>ชั้น</th><th>ค่าแอด</th><th>สัดส่วน</th><th>ยอดขาย</th><th>ROAS</th><th>จำนวนแอด</th><th>อ่านจากชื่อไม่ได้</th></tr></thead>
             <tbody>
               {b.funnel.rows.map((r) => (
                 <tr key={r.stage}>
@@ -159,18 +172,54 @@ export default function BriefView() {
                   <td>{money(r.revenue)}</td>
                   <td className={r.roas >= 3.5 ? "good" : r.roas >= 1 ? "warn" : "bad"}>{r.roas ? r.roas.toFixed(2) : "–"}</td>
                   <td>{r.ads}</td>
+                  <td className={r.assumedSpend > 0 ? "warn" : ""}>{r.assumedSpend > 0 ? `${money(r.assumedSpend)} · ${r.assumedAds} ตัว` : "–"}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
         {b.funnel.notes.map((n, i) => <div className="warn" key={i} style={{ marginTop: 10 }}>⚠️ {n}</div>)}
-        {b.unnamed.count > 0 && (
-          <div className="hint" style={{ marginTop: 8 }}>
-            {b.unnamed.count} แอด ({money(b.unnamed.spend)}) ชื่อไม่มี AW / LAL / RE180 → อ่านไม่ออกว่าอยู่ชั้นไหน
-          </div>
-        )}
       </div>
+
+      {/* แอดที่ตั้งชื่อไม่ครบ + ชื่อที่ควรเปลี่ยนเป็น (ก๊อปไปวางใน Ads Manager ได้เลย) */}
+      {b.unnamed.count > 0 && (
+        <div className="panel">
+          <h2>
+            🏷️ แอดที่ตั้งชื่อไม่ครบ
+            <span className="hint">{b.unnamed.count} ตัว · {money(b.unnamed.spend)} = {(b.unnamed.share * 100).toFixed(0)}% ของงบ · เรียงตามงบมากไปน้อย</span>
+          </h2>
+          <div className="tbl-scroll">
+            <table>
+              <thead><tr><th>ชื่อตอนนี้</th><th>บัญชี</th><th>ค่าแอด</th><th>ROAS</th><th>ชื่อที่ควรเปลี่ยนเป็น</th></tr></thead>
+              <tbody>
+                {b.unnamed.rows.slice(0, 20).map((r) => (
+                  <tr key={r.accountName + r.adName}>
+                    <td className="name-cell">{r.adName}</td>
+                    <td>{r.accountName}</td>
+                    <td>{money(r.spend)}</td>
+                    <td className={r.roas >= 3.5 ? "good" : r.roas >= 1 ? "warn" : "bad"}>{r.roas ? r.roas.toFixed(2) : "–"}</td>
+                    <td className="name-cell"><code>{r.suggested || "–"}</code></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {b.unnamed.rows.length > 20 && <div className="hint" style={{ marginTop: 8 }}>… อีก {b.unnamed.rows.length - 20} ตัว ดูรายการเต็มบนหน้า dashboard</div>}
+        </div>
+      )}
+
+      {/* ใช้เงินเพิ่มแต่ยอดรวมไม่โต = แคมเปญแย่งลูกค้ากันเอง (ebook แม่เอ บทที่ 50) */}
+      {b.cannibal.length > 0 && (
+        <div className="warn">
+          ⚔️ <strong>ใช้เงินเพิ่มแต่ยอดรวมไม่โต</strong> — {b.cannibal.map((c) => `${c.product}: ${c.why}`).join(" · ")}
+          {" "}— หยุดแตกตัวเพิ่ม แล้วคัดให้เหลือแต่ตัวที่ทำกำไร
+        </div>
+      )}
+      {b.cloneFamilies.length > 0 && (
+        <div className="warn">
+          🧬 <strong>แตกเกิน 3 ตัวต่อตัวแม่</strong> — {b.cloneFamilies.map((f) => `${f.parent} (โคลน ${f.clones} ตัว · ${money(f.spend)} · ROAS ${f.roas.toFixed(2)})`).join(" · ")}
+        </div>
+      )}
 
       {b.churn.stopped >= 10 && (
         <div className="warn">
