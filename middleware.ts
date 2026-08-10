@@ -8,11 +8,12 @@ export async function middleware(req: NextRequest) {
   if (!pw) return NextResponse.next();
 
   const { pathname } = req.nextUrl;
-  // ยกเว้น: หน้า login, api login, และ /api/sync (cron — กันด้วย CRON_SECRET เองแล้ว)
+  // ยกเว้น: หน้า login, api login, และ route ที่ cron ยิง (กันด้วย CRON_SECRET เองแล้ว)
   if (
     pathname.startsWith("/login") ||
     pathname.startsWith("/api/login") ||
-    pathname.startsWith("/api/sync")
+    pathname.startsWith("/api/sync") ||
+    pathname.startsWith("/api/digest/line")
   ) {
     return NextResponse.next();
   }

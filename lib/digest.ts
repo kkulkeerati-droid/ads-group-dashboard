@@ -132,10 +132,16 @@ export function buildDigest(cur: Metrics, prev: Metrics, kpi: DigestKPI): Digest
   if (!brandSuggest.length) brandSuggest.push({ text: "ทุก KPI อยู่ในเกณฑ์ — ยังไม่มีเรื่องที่ต้องให้แบรนด์แก้", tone: "good" });
 
   // ── headline ──
+  // ปลายทางของงบต้องเป็น "ชื่อสินค้าจริง" เสมอ — ถ้าสัปดาห์นี้ไม่มีตัวไหนถึงเป้า
+  // ให้ใช้ตัวที่ ROAS ดีสุดเท่าที่มี (ขอแค่ยังไม่ขาดทุน) แทนคำลอย ๆ ว่า "ตัวที่ดีสุด"
+  const bestP = scaleP[0] || prods.filter((p) => p.roas >= 1).sort((a, b) => b.roas - a.roas)[0];
+  const dest = bestP ? `${bestP.key} (ROAS ${bestP.roas.toFixed(2)})` : "";
   const headline = killP.length
-    ? `หยุด ${killP[0].key} (ติดลบ ${money(killP[0].spend - killP[0].revenue)}) แล้วย้ายงบไป ${scaleP[0]?.key || "ตัวที่ ROAS ดีสุด"}`
+    ? dest
+      ? `หยุด ${killP[0].key} (ติดลบ ${money(killP[0].spend - killP[0].revenue)}) แล้วย้ายงบไป ${dest}`
+      : `หยุด ${killP[0].key} (ติดลบ ${money(killP[0].spend - killP[0].revenue)}) — สัปดาห์นี้ยังไม่มีตัวไหนคืนทุน อย่าเพิ่งเติมงบที่ไหน`
     : cur.roas >= kpi.roas
-      ? `ROAS ${cur.roas.toFixed(2)} ผ่านเป้า — เพิ่มงบ ${scaleP[0]?.key || "ตัวชนะ"} +20%`
+      ? `ROAS ${cur.roas.toFixed(2)} ผ่านเป้า — เพิ่มงบ ${dest || "ตัวชนะ"} +20%`
       : `ROAS ${cur.roas.toFixed(2)} ต่ำกว่าเป้า ${kpi.roas} — โฟกัสแก้คุณภาพแชท/ปิดการขายก่อนเพิ่มงบ`;
 
   return {

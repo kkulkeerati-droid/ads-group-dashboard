@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type CSSProperties } from "react";
 import type { Metrics, MetricKey, AccountTotal, TopAd } from "@/lib/types";
 import { GROUPS, type GroupDef } from "@/lib/groups";
+import { decideAd, buildScope, actionWeight, type Decision, type DecideScope } from "@/lib/decide";
 
 const PLATFORMS = [
   { key: "all", label: "ทั้งหมด" },
@@ -44,6 +45,9 @@ const fmtMetric = (v: number, money: boolean) => (money ? "฿" + nMoney(v) : nI
 
 const DEFAULT_GROUPS_JSON = JSON.stringify(GROUPS);
 
+// เป้า ROAS ที่ใช้ตัดธง 🟢/🟡/🔴 — ต้องตรงกับ default ของ /digest (?kpiRoas=)
+const KPI_ROAS = 2;
+
 // ─── เทียบงวด + สถานะเป้า/ธงตัดสินใจ ─────────────────────────────────
 function Delta({ cur, prev, lowerBetter }: { cur: number; prev?: number; lowerBetter?: boolean }) {
   if (prev === undefined || prev === null || prev === 0) return null;
@@ -76,14 +80,13 @@ function roasStatus(r: number): "good" | "warn" | "bad" | "" {
   return "bad";
 }
 
-// ธงตัดสินใจต่อ ad: 🟢 สเกล / 🔴 ปิด / 🟡 เฝ้าดู
-function adDecision(cpr: number, results: number, spend: number, target?: number): { label: string; cls: string } | null {
-  if (!target) return null;
-  if (results === 0 && spend > target) return { label: "🔴 ปิด", cls: "bad" };
-  if (!cpr) return null;
-  if (cpr <= target * 0.9 && results >= 5) return { label: "🟢 สเกล", cls: "good" };
-  if (cpr > target * 1.3) return { label: "🔴 ปิด", cls: "bad" };
-  return { label: "🟡 เฝ้าดู", cls: "warn" };
+// ธงตัดสินใจต่อ ad — logic อยู่ที่ lib/decide.ts (ROAS นำ, ค่าทักไม่ใช่ตัวตัดสินแล้ว)
+// wrapper นี้แค่ผูก ad กับ scope ของชุดข้อมูลที่กำลังดูอยู่
+function decide(a: TopAd, scope: DecideScope, target?: number): Decision | null {
+  return decideAd(
+    { spend: a.spend, results: a.results, replies: a.replies, revenue: a.revenue, roas: a.roas, cpReply: a.cpReply, cpr: a.cpr, adName: a.adName },
+    { kpiRoas: scope.kpiRoas, avgCpReply: scope.avgCpReply, peerHasRevenue: scope.groupsWithRevenue.has(a.group), target }
+  );
 }
 
 // ─── เรียงตาราง (คลิกหัวคอลัมน์) ─────────────────────────────────────
@@ -148,6 +151,10 @@ export default function Dashboard() {
   const [accSort, setAccSort] = useState<SortState>({ key: "spend", dir: -1 });
   const [adSort, setAdSort] = useState<SortState>({ key: "spend", dir: -1 });
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+  // อ่าน state จาก URL เสร็จหรือยัง — กัน fetch ยิงด้วยค่าเริ่มต้นแข่งกับค่าจริง
+  const [urlReady, setUrlReady] = useState(false);
+  // ลำดับคำขอ — ผลที่มาช้ากว่าคำขอล่าสุดให้ทิ้ง (กันผลเก่าทับผลใหม่)
+  const reqSeq = useRef(0);
 
   // อ่าน state จาก URL (รองรับลิงก์แชร์) + localStorage groups
   useEffect(() => {
@@ -178,6 +185,7 @@ export default function Dashboard() {
         if (saved) setGroupsCfg(JSON.parse(saved));
       }
     } catch { /* ignore */ }
+    setUrlReady(true); // ← ปลดล็อกให้ load() ยิงได้ (ต้องอยู่บรรทัดสุดท้ายเสมอ)
   }, []);
 
   // ธีม (จำใน localStorage)
@@ -198,6 +206,11 @@ export default function Dashboard() {
   }, [groupsCfg]);
 
   const load = useCallback(async () => {
+    // ยังไม่ได้อ่านค่าจาก URL = อย่าเพิ่งยิง
+    // ไม่งั้นจะยิงด้วย state เริ่มต้น (14 วัน / ไม่กรองบัญชี) แข่งกับตัวที่ถูกต้อง
+    // แล้วตัวที่ตอบกลับทีหลังชนะ → ลิงก์แชร์ที่ล็อกบัญชีให้ลูกค้าอาจโชว์ทุกบัญชี
+    if (!urlReady) return;
+    const seq = ++reqSeq.current;
     try {
       setErr(null);
       const custom = customSince && customUntil;
@@ -207,16 +220,18 @@ export default function Dashboard() {
       if (acctFilter.length) qs.set("accounts", acctFilter.join(","));
       const res = await fetch(`/api/metrics?${qs}`, { cache: "no-store" });
       const json = await res.json();
+      if (seq !== reqSeq.current) return; // มีคำขอใหม่กว่าแล้ว — ทิ้งผลเก่า
       if (json.error) throw new Error(json.error);
       setData(json);
     } catch (e: any) {
+      if (seq !== reqSeq.current) return;
       setErr(e.message || String(e));
     } finally {
-      setLoading(false);
+      if (seq === reqSeq.current) setLoading(false);
     }
-  }, [platform, preset, customSince, customUntil, groupsParam, acctFilter]);
+  }, [urlReady, platform, preset, customSince, customUntil, groupsParam, acctFilter]);
 
-  useEffect(() => { setLoading(true); load(); }, [load]);
+  useEffect(() => { if (urlReady) { setLoading(true); load(); } }, [load, urlReady]);
 
   // จำรายชื่อบัญชีทั้งหมด (ตอนยังไม่กรอง) ไว้ให้ตัวเลือกเล่มรายงาน
   useEffect(() => {
@@ -238,6 +253,24 @@ export default function Dashboard() {
 
   const sortedAccounts = useMemo(() => (data ? sortRows(data.accounts, accSort, accGetVal) : []), [data, accSort]);
   const sortedTopAds = useMemo(() => (data ? sortRows(data.topAds, adSort, adGetVal) : []), [data, adSort]);
+
+  // ภาพรวมที่เครื่องตัดสินใจต้องรู้ก่อนตัดสินรายตัว (ROAS เป้า / ต้นทุนต่อคนตอบเฉลี่ย / กลุ่มไหนมียอดขายจริง)
+  // "กลุ่มไหนมียอดขาย" ดูจาก groups ทั้งชุด ไม่ใช่แค่ topAds 25 ตัว — ไม่งั้นแอดที่หลุด cap จะทำให้อ่านว่า tracking พัง
+  const scope: DecideScope = useMemo(
+    () =>
+      buildScope(
+        (data?.groups ?? []).map((g) => ({ group: String(g.key), revenue: g.revenue })),
+        { cpReply: data?.cpReply ?? 0 },
+        KPI_ROAS
+      ),
+    [data]
+  );
+
+  // topAds ถูก cap ที่ 25 ตัว — ถ้าครอบไม่ถึงยอดรวมต้องบอกให้รู้ (กันอ่านว่า "นี่คือทั้งหมด")
+  const adsCoverage = useMemo(() => {
+    if (!data?.topAds?.length || !data.spend) return 1;
+    return data.topAds.reduce((s, a) => s + a.spend, 0) / data.spend;
+  }, [data]);
 
   const shareLink = async () => {
     const u = new URL(window.location.origin + window.location.pathname);
@@ -397,37 +430,48 @@ export default function Dashboard() {
         <div className="loading">กำลังโหลด…</div>
       ) : data ? (
         <>
-          {/* 🎯 สรุปคำแนะนำอัตโนมัติ — แปลตัวเลขเป็นคำสั่ง ปิด/สเกล */}
+          {/* 🎯 สรุปคำแนะนำอัตโนมัติ — ROAS เป็นตัวตัดสิน ไม่ใช่ค่าทัก
+              เรียง "ปิด" ตามเงินที่ติดลบจริง (spend−revenue) ไม่ใช่ตามยอดใช้จ่าย */}
           {(() => {
             const recs = data.topAds
               .map((a) => {
                 const g = data.groups.find((x) => x.key === a.group);
-                return { a, g, dec: adDecision(a.cpr, a.results, a.spend, g?.target) };
+                return { a, g, dec: decide(a, scope, g?.target) };
               })
               .filter((r) => r.dec);
-            const why = (r: (typeof recs)[0]) =>
-              r.a.results === 0
-                ? `฿${nMoney(r.a.spend)} ยังไม่มีผลลัพธ์`
-                : `CPR ฿${nMoney(r.a.cpr)}${r.g?.target ? ` เป้า ฿${r.g.target}` : ""}`;
-            const close = recs.filter((r) => r.dec!.cls === "bad").sort((x, y) => y.a.spend - x.a.spend).slice(0, 3);
-            const scale = recs.filter((r) => r.dec!.cls === "good").sort((x, y) => x.a.cpr - y.a.cpr).slice(0, 3);
-            if (!close.length && !scale.length) return null;
+            const close = recs
+              .filter((r) => r.dec!.cls === "bad")
+              .sort((x, y) => actionWeight(y.dec!, y.a.spend, y.a.revenue) - actionWeight(x.dec!, x.a.spend, x.a.revenue))
+              .slice(0, 3);
+            const scale = recs.filter((r) => r.dec!.cls === "good").sort((x, y) => y.a.roas - x.a.roas).slice(0, 3);
+            const fix = recs
+              .filter((r) => r.dec!.cls === "fix")
+              .sort((x, y) => y.a.spend - x.a.spend)
+              .slice(0, 2);
+            if (!close.length && !scale.length && !fix.length) return null;
+            const pill = (r: (typeof recs)[0], key: string) => (
+              <span className={"reco pill " + r.dec!.cls} key={key} title={`${r.a.adName} · ${r.a.accountName}\n${r.dec!.why}`}>
+                {r.dec!.label} <b>{r.a.adName || "(ไม่มีชื่อ)"}</b> <em className="reco-acct">@{r.a.accountName}</em>{" "}
+                <small>{r.dec!.why}</small>
+              </span>
+            );
             return (
               <div className="reco-bar">
                 <span className="reco-title">🎯 แนะนำ</span>
-                {close.map((r, i) => (
-                  <span className="reco pill bad" key={"c" + i} title={`${r.a.adName} · ${r.a.accountName}`}>
-                    🔴 ปิด <b>{r.a.adName || "(ไม่มีชื่อ)"}</b> <em className="reco-acct">@{r.a.accountName}</em> <small>{why(r)}</small>
-                  </span>
-                ))}
-                {scale.map((r, i) => (
-                  <span className="reco pill good" key={"s" + i} title={`${r.a.adName} · ${r.a.accountName}`}>
-                    🟢 สเกล <b>{r.a.adName || "(ไม่มีชื่อ)"}</b> <em className="reco-acct">@{r.a.accountName}</em> <small>{why(r)}</small>
-                  </span>
-                ))}
+                {close.map((r, i) => pill(r, "c" + i))}
+                {scale.map((r, i) => pill(r, "s" + i))}
+                {fix.map((r, i) => pill(r, "f" + i))}
               </div>
             );
           })()}
+          {adsCoverage < 0.9 && (
+            <div className="warn">
+              ⚠️ ตาราง/คำแนะนำด้านล่างอ่านจาก <strong>Top 25 ads</strong> ซึ่งครอบแค่{" "}
+              <strong>{(adsCoverage * 100).toFixed(0)}%</strong> ของค่าใช้จ่ายทั้งหมด — อีก{" "}
+              {(100 - adsCoverage * 100).toFixed(0)}% (฿{nInt(data.spend * (1 - adsCoverage))}) กระจายอยู่ในแอดตัวเล็ก
+              ที่ยังไม่ถูกประเมิน · อยากเห็นครบให้กรองทีละบัญชี
+            </div>
+          )}
           {/* สลับมุมมองการ์ด: กลุ่มตาม prefix ↔ แยกตามสินค้า (1 Cut / Cart / Ultra / GPT St.) */}
           {data.content?.products && data.content.products.length > 1 && (
             <div className="view-switch no-print">
@@ -528,23 +572,27 @@ export default function Dashboard() {
           {/* 🎨 วิเคราะห์ Content Ads — มุมคอนเทนต์ × กลุ่มเป้าหมาย (แกะจากชื่อแอด) */}
           {data.content && (data.content.themes.length > 1 || data.content.audiences.length > 1) && (
             <div className="panel">
-              <h2>🎨 Content Ads<span className="hint">แกะจากชื่อแอด — มุมไหน/กลุ่มไหนค่าทักถูก · เทียบค่าเฉลี่ยรวม ฿{nMoney(data.cpr)}</span></h2>
+              <h2>🎨 Content Ads<span className="hint">แกะจากชื่อแอด — มุมไหน/กลุ่มไหน<b>ทำเงิน</b> · ตัดจาก ROAS เป้า {KPI_ROAS} (ค่าทักไว้ดูประกอบ)</span></h2>
               <div className="content-grid">
                 {([["มุมคอนเทนต์", data.content.themes], ["กลุ่มเป้าหมาย", data.content.audiences]] as const).map(([title, dims]) => (
                   <div key={title}>
                     <div className="content-sub">{title}</div>
                     <table className="mini">
-                      <thead><tr><th>{title}</th><th>spend</th><th>ทัก</th><th>ค่าทัก</th><th></th></tr></thead>
+                      <thead><tr><th>{title}</th><th>spend</th><th>ROAS</th><th>ค่าทัก</th><th></th></tr></thead>
                       <tbody>
                         {dims.map((t) => {
-                          const vs = data.cpr ? t.cpr / data.cpr : 1;
-                          const cls = !t.cpr ? "" : vs <= 0.8 ? "good" : vs >= 1.3 ? "bad" : "warn";
-                          const tag = !t.cpr ? "–" : vs <= 0.8 ? "🟢 อัดต่อ" : vs >= 1.3 ? "🔴 แพง" : "🟡 กลางๆ";
+                          // ตัดจาก ROAS เหมือนธงที่อื่น — ค่าทักถูกไม่ได้แปลว่ามุมนี้ขายได้
+                          // ไม่มียอดขายเลย → บอกว่า "ยังไม่มียอด" ไม่ใช่ตัดสินว่าแพง/ถูก
+                          const [cls, tag] = !t.revenue
+                            ? (t.spend > 0 ? ["fix", "⚫ ยังไม่มียอด"] : ["", "–"])
+                            : t.roas >= KPI_ROAS ? ["good", "🟢 อัดต่อ"]
+                            : t.roas >= 1 ? ["warn", "🟡 กลางๆ"]
+                            : ["bad", "🔴 ขาดทุน"];
                           return (
-                            <tr key={t.key}>
+                            <tr key={t.key} title={t.revenue ? `฿${nInt(t.spend)} → ฿${nInt(t.revenue)}` : `ใช้ ฿${nInt(t.spend)} ยังไม่มียอดขายเข้าระบบ`}>
                               <td className="name-cell">{t.key} <small className="hint">({t.ads} ads)</small></td>
                               <td>฿{nInt(t.spend)}</td>
-                              <td>{nInt(t.results)}</td>
+                              <td className={roasStatus(t.roas)}>{t.roas ? t.roas.toFixed(2) : "–"}</td>
                               <td>{t.cpr ? "฿" + nMoney(t.cpr) : "–"}</td>
                               <td><span className={"pill " + cls}>{tag}</span></td>
                             </tr>
@@ -569,35 +617,40 @@ export default function Dashboard() {
               .map(([name, ads]) => {
                 const spend = ads.reduce((s, a) => s + a.spend, 0);
                 const results = ads.reduce((s, a) => s + a.results, 0);
+                const revenue = ads.reduce((s, a) => s + a.revenue, 0);
                 const rated = ads.map((a) => {
                   const g = data.groups.find((x) => x.key === a.group);
-                  return { a, target: g?.target, dec: adDecision(a.cpr, a.results, a.spend, g?.target) };
+                  return { a, target: g?.target, dec: decide(a, scope, g?.target) };
                 });
-                const go = rated.filter((r) => r.dec?.cls === "good").sort((x, y) => x.a.cpr - y.a.cpr);
-                const stop = rated.filter((r) => r.dec?.cls === "bad").sort((x, y) => y.a.spend - x.a.spend);
-                return { name, spend, results, cpr: results ? spend / results : 0, go, stop, total: ads.length };
+                const go = rated.filter((r) => r.dec?.cls === "good").sort((x, y) => y.a.roas - x.a.roas);
+                const stop = rated
+                  .filter((r) => r.dec?.cls === "bad" || r.dec?.cls === "fix")
+                  .sort((x, y) => actionWeight(y.dec!, y.a.spend, y.a.revenue) - actionWeight(x.dec!, x.a.spend, x.a.revenue));
+                return { name, spend, revenue, roas: spend ? revenue / spend : 0, results, cpr: results ? spend / results : 0, go, stop, total: ads.length };
               })
               .filter((x) => x.spend > 0)
               .sort((x, y) => y.spend - x.spend);
             if (accts.length === 0) return null;
             return (
               <div className="panel">
-                <h2>🏦 แยกราย Ad Account<span className="hint">บัญชีไหน · ตัวไหนไปต่อ 🟢 / พอแค่นี้ 🔴 · เรียงตามค่าใช้จ่าย</span></h2>
+                <h2>🏦 แยกราย Ad Account<span className="hint">บัญชีไหน · ตัวไหนไปต่อ 🟢 / พอแค่นี้ 🔴 · ตัดสินจาก ROAS · เรียงตามค่าใช้จ่าย</span></h2>
                 <div className="acct-cards">
                   {accts.map((ac) => (
                     <div className="acct-card" key={ac.name}>
                       <div className="acct-head-row">
                         <strong>{ac.name}</strong>
-                        <span className="hint">฿{nInt(ac.spend)} · ทัก {nInt(ac.results)} · ค่าทัก {ac.cpr ? "฿" + nMoney(ac.cpr) : "–"} · {ac.total} ads</span>
+                        <span className="hint">
+                          ฿{nInt(ac.spend)} → ขาย ฿{nInt(ac.revenue)} · <b className={roasStatus(ac.roas)}>ROAS {ac.roas ? ac.roas.toFixed(2) : "–"}</b> · ทัก {nInt(ac.results)} · {ac.total} ads
+                        </span>
                       </div>
                       {ac.go.length > 0 && (
                         <div className="acct-list">
                           <span className="acct-tag good">🟢 ไปต่อ</span>
                           {ac.go.slice(0, 4).map((r, i) => (
-                            <div className="acct-ad" key={"g" + i}>
+                            <div className="acct-ad" key={"g" + i} title={r.dec!.why}>
                               <span className="name-cell">{r.a.adName || "(ไม่มีชื่อ)"}</span>
-                              <span className="good">฿{nMoney(r.a.cpr)}</span>
-                              <small className="hint">ทัก {r.a.results} · ฿{nInt(r.a.spend)}{r.target ? ` · เป้า ฿${r.target}` : ""}</small>
+                              <span className="good">ROAS {r.a.roas.toFixed(2)}</span>
+                              <small className="hint">฿{nInt(r.a.spend)} → ฿{nInt(r.a.revenue)} · ตอบจริง {r.a.replies}</small>
                             </div>
                           ))}
                         </div>
@@ -606,15 +659,15 @@ export default function Dashboard() {
                         <div className="acct-list">
                           <span className="acct-tag bad">🔴 พอแค่นี้</span>
                           {ac.stop.slice(0, 4).map((r, i) => (
-                            <div className="acct-ad" key={"b" + i}>
+                            <div className="acct-ad" key={"b" + i} title={r.dec!.why}>
                               <span className="name-cell">{r.a.adName || "(ไม่มีชื่อ)"}</span>
-                              <span className="bad">{r.a.results === 0 ? "ทัก 0" : "฿" + nMoney(r.a.cpr)}</span>
-                              <small className="hint">ทัก {r.a.results} · ฿{nInt(r.a.spend)}{r.target ? ` · เป้า ฿${r.target}` : ""}</small>
+                              <span className={r.dec!.cls}>{r.dec!.cls === "fix" ? "⚫ ไม่รู้ยอด" : r.a.revenue > 0 ? `ROAS ${r.a.roas.toFixed(2)}` : "ขาย ๐"}</span>
+                              <small className="hint">฿{nInt(r.a.spend)} → ฿{nInt(r.a.revenue)} · ตอบจริง {r.a.replies}</small>
                             </div>
                           ))}
                         </div>
                       )}
-                      {ac.go.length === 0 && ac.stop.length === 0 && <div className="hint">— ยังไม่มีตัวที่ชี้ขาด (ข้อมูลน้อย/ยังไม่ตั้งเป้า CPR)</div>}
+                      {ac.go.length === 0 && ac.stop.length === 0 && <div className="hint">— ยังไม่มีตัวที่ชี้ขาด (ข้อมูลน้อย/ยังไม่พ้น learning)</div>}
                     </div>
                   ))}
                 </div>
@@ -626,7 +679,13 @@ export default function Dashboard() {
           <BizPanel spend={data.spend} results={data.results} since={data.since} until={data.until} readOnly={readOnly} />
 
           <div className="panel">
-            <h2>Top ads<span className="hint">25 อันดับแรก (ตามค่าใช้จ่าย) · คลิกหัวคอลัมน์เพื่อเรียงภายใน 25 ตัว</span></h2>
+            <h2>
+              Top ads
+              <span className="hint">
+                25 อันดับแรก (ตามค่าใช้จ่าย) · คลิกหัวคอลัมน์เพื่อเรียงภายใน 25 ตัว · ธงตัดจาก <b>ROAS เป้า {KPI_ROAS}</b>{" "}
+                (🟢 ≥{KPI_ROAS} · 🟡 1–{KPI_ROAS} · 🔴 &lt;1 หรือขาย ๐ · ⚫ ยังไม่มียอดเข้าระบบ · ⏳ ใช้ยังไม่ถึง ฿300) — ชี้ที่ธงเพื่อดูเหตุผล
+              </span>
+            </h2>
             <div className="tbl-scroll">
               <table>
                 <thead>
@@ -648,7 +707,7 @@ export default function Dashboard() {
                 <tbody>
                   {sortedTopAds.map((a, i) => {
                     const g = groups.find((x) => x.key === a.group);
-                    const dec = adDecision(a.cpr, a.results, a.spend, g?.target);
+                    const dec = decide(a, scope, g?.target);
                     return (
                       <tr key={i}>
                         <td className="name-cell" title={a.adName}>{a.adName || "(ไม่มีชื่อ)"}</td>
@@ -662,7 +721,7 @@ export default function Dashboard() {
                         <td className={roasStatus(a.roas)}>{a.roas ? a.roas.toFixed(2) : "–"}</td>
                         <td className={cprStatus(a.cpr, g?.target)}>{a.cpr ? "฿" + nMoney(a.cpr) : "–"}</td>
                         <td>{a.cpm ? "฿" + nMoney(a.cpm) : "–"}</td>
-                        <td>{dec ? <span className={"pill " + dec.cls}>{dec.label}</span> : "–"}</td>
+                        <td>{dec ? <span className={"pill " + dec.cls} title={dec.why}>{dec.label}</span> : "–"}</td>
                       </tr>
                     );
                   })}
