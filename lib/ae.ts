@@ -171,6 +171,27 @@ export function fatigueOf(v: AdView): Fatigue {
   return { score, signals: s, tired: score >= 2 };
 }
 
+// ─── 4.5) บันไดออเดอร์ — ตัดสินตามจำนวน ไม่ใช่ตาม ROAS อย่างเดียว ────
+// จาก ebook "บทเรียนแม่เอ โฆษณา 100 ล้าน":
+//   1–5 ออเดอร์ = ดูก่อน · 10 = เริ่มวิเคราะห์ · 20–30 = เริ่มตัดสินใจ · 50+ = สเกลจริงจัง
+//   "อย่าสเกลเพราะ ROAS สวย แต่เพิ่งขายได้ 2 ออเดอร์"
+// ROAS จากออเดอร์เดียวไม่ใช่หลักฐาน — มันคือความบังเอิญที่ยังไม่ถูกพิสูจน์
+export const ORDERS_ANALYZE = 10; // ต่ำกว่านี้ = ยังอ่านไม่ออก
+export const ORDERS_DECIDE = 20;  // ถึงตรงนี้ค่อยตัดสินใจได้
+export const ORDERS_SCALE = 30;   // ถึงตรงนี้ค่อยดันงบ/แตกตัวได้เต็มปาก
+
+/** ต้นทุนต่อออเดอร์นิ่งหรือยัง — นิ่ง 3 วันขึ้นไปถึงจะเพิ่มงบได้ (เงื่อนไขที่ 1 ของแม่เอ) */
+export function costIsStable(v: AdView): { stable: boolean; why: string } {
+  const r = v.recent, p = v.prior;
+  const cprOf = (s: Slice) => (s.purchases > 0 ? s.spend / s.purchases : 0);
+  const a = cprOf(p), b = cprOf(r);
+  if (!a || !b) return { stable: false, why: "ยังไม่มีออเดอร์พอให้ดูว่าต้นทุนนิ่งไหม" };
+  const drift = Math.abs(b - a) / a;
+  return drift <= 0.3
+    ? { stable: true, why: `ต้นทุนต่อออเดอร์นิ่ง (฿${Math.round(a)}→฿${Math.round(b)})` }
+    : { stable: false, why: `ต้นทุนต่อออเดอร์ยังแกว่ง ฿${Math.round(a)}→฿${Math.round(b)} (${(drift * 100).toFixed(0)}%)` };
+}
+
 // ─── 5) พรุ่งนี้ทำอะไรกับแอดตัวนี้ ────────────────────────────────────
 export type AeAction = "SCALE" | "CLONE" | "KEEP" | "REDUCE" | "STOP" | "NEW_CREATIVE" | "FIX_TRACKING" | "WAIT";
 
@@ -277,21 +298,46 @@ export function callFor(
       how: "ปล่อยงบเท่าเดิม อย่าเพิ่งเติม ดูอีก 2-3 วัน" };
   }
 
-  // ผ่านเส้นสเกลแล้ว → เลือกระหว่างดันงบ กับ แตกตัวใหม่
+  // ── ผ่านเส้นสเกลแล้ว แต่ยังต้องผ่านบันไดออเดอร์ก่อน ──
+  // กติกาแม่เอ: "อย่าสเกลเพราะ ROAS สวย แต่เพิ่งขายได้ 2 ออเดอร์"
+  // ROAS 5 จากออเดอร์เดียว = ความบังเอิญ ไม่ใช่หลักฐานว่าระบบหาคนซื้อซ้ำได้
+  const orders = a.purchases;
+  if (orders < ORDERS_ANALYZE) {
+    return { action: "KEEP", money: 0,
+      why: `ROAS ${roas.toFixed(2)} สวย แต่เพิ่งได้ ${orders} ออเดอร์ — ยังไม่ใช่หลักฐาน`,
+      how: `ปล่อยงบเท่าเดิมให้ถึง ${ORDERS_ANALYZE} ออเดอร์ก่อน แล้วค่อยดู · ROAS จากออเดอร์ไม่กี่รายการเหวี่ยงง่ายมาก` };
+  }
+
+  const stable = costIsStable(v);
   const saturated = v.recent.freq >= 2 || v.recent.freq > ctx.avgFreq * 1.4;
+
+  // อิ่มกลุ่ม / ดันงบมาหลายรอบ / เริ่มล้า → แตกตัวใหม่ ดีกว่าดันงบตัวเดิม
   if (saturated || v.bumps >= 2 || fat.score >= 1) {
     const reason = saturated
       ? `กลุ่มเริ่มอิ่ม (คนเห็นซ้ำ ${v.recent.freq.toFixed(2)} ครั้ง)`
       : v.bumps >= 2
         ? "ดันงบมาแล้ว 2 รอบ"
         : `เริ่มมีสัญญาณล้า (${fat.signals[0]})`;
+    const enough = orders >= ORDERS_SCALE;
     return { action: "CLONE", money: a.revenue,
-      why: `ROAS ${roas.toFixed(2)} ดี แต่${reason}`,
-      how: `duplicate ไปกลุ่มใหม่ (LAL อีก % / ความสนใจอื่น) แทนการดันงบตัวเดิม · เช็คผลใน 24 ชม. ถ้าแพงกว่าตัวแม่ให้ปิด clone` };
+      why: `ROAS ${roas.toFixed(2)} · ${orders} ออเดอร์ · ${reason}`,
+      how: enough
+        ? "โคลนแล้วลดงบ ไปกลุ่มใหม่ (LAL อีก % / ความสนใจอื่น) แทนดันงบตัวเดิม · เช็ค 24 ชม. แพงกว่าตัวแม่ให้ปิด clone"
+        : `ยังมีแค่ ${orders} ออเดอร์ — โคลนได้แต่ทีละตัว อย่าแตกรัว รอให้ถึง ${ORDERS_SCALE} ออเดอร์ค่อยแตกเป็นกอง` };
   }
+
+  // ต้นทุนยังแกว่ง = ระบบยังไม่นิ่ง → ห้ามเพิ่มงบ (เงื่อนไขที่ 1 ของแม่เอ)
+  if (!stable.stable) {
+    return { action: "KEEP", money: 0,
+      why: `ROAS ${roas.toFixed(2)} · ${orders} ออเดอร์ แต่${stable.why}`,
+      how: "รอให้ต้นทุนต่อออเดอร์นิ่งอีก 2-3 วันค่อยเพิ่มงบ · เพิ่มตอนระบบยังไม่นิ่ง learning จะรีเซ็ต" };
+  }
+
   return { action: "SCALE", money: a.revenue - a.spend,
-    why: `ROAS ${roas.toFixed(2)} (${label}) ผ่านเส้นสเกล ${ROAS_SCALE}`,
-    how: "เพิ่มงบ +20% แล้วอย่าแตะอีก 2-3 วัน (แรงกว่านี้ learning รีเซ็ต)" };
+    why: `ROAS ${roas.toFixed(2)} (${label}) · ${orders} ออเดอร์ · ${stable.why}`,
+    how: orders >= ORDERS_SCALE
+      ? "เพิ่มงบ +20% แล้วอย่าแตะอีก 2-3 วัน · อยากโตเร็วกว่านี้ให้โคลนเพิ่มแทนการอัดตัวเดิม"
+      : `เพิ่มงบ +20% แล้วอย่าแตะอีก 2-3 วัน · ถึง ${ORDERS_SCALE} ออเดอร์ค่อยสเกลจริงจัง` };
 }
 
 // ─── 6) สมดุล funnel ทั้งบัญชี ────────────────────────────────────────
