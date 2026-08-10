@@ -83,18 +83,29 @@ export const AUDIENCE_TOKENS = ["AW", "LAL", "LAL1-3%", "LAL2-3%", "ExAll", "Ex1
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** งบต่อวันที่ทีมเขียนไว้ในชื่อ เช่น "AI/AW/600/12Jul" → 600 · "500 > 700" → 700 (ตัวล่าสุด) */
+/**
+ * งบต่อวันที่ทีมเขียนไว้ในชื่อ เช่น "AI/AW/600/12Jul" → 600 · "500 > 700" → 700 (ตัวล่าสุด)
+ * คืน null เมื่ออ่านไม่ชัด — **ยอมอ่านไม่ออก ดีกว่าอ่านผิด** เพราะค่านี้เป็นตัวตั้งเส้นปิดของกฎแอดมด 30%
+ * (เคยพลาด: "Clone 2026-08-09 1306" อ่านเวลาเป็นงบ · "view msg 001 - 36-45" อ่านช่วงอายุ 45 เป็นงบ
+ *  → เส้นปิดเหลือ ฿13.5 แอดที่เพิ่งใช้ ฿20 วันแรกโดนสั่งปิดทันที)
+ */
 export function budgetFromName(adName: string): number | null {
-  const n = adName || "";
-  // ตัดคำที่มีตัวเลขแต่ไม่ใช่งบออกก่อน (RE180 / LAL1-3% / วันที่ / เวลา clone)
+  let n = adName || "";
+  // 1) ตัดหางที่ Meta เติมเอง (Clone 2026-08-09 1306 / - สำเนา) — มีทั้งวันที่และเวลา
+  n = n.replace(/\s*(?:[-–]\s*สำเนา|Clone\s+\d{4}-\d{2}-\d{2}[\s\d]*)\s*$/gi, " ");
+  // 2) ตัดคำที่มีตัวเลขแต่ไม่ใช่งบ
   const cleaned = n
     .replace(/\bRE\s?\d{1,3}\b/gi, " ")
     .replace(/\bEX\s?\d{1,3}\b/gi, " ")
     .replace(/\bLAL\s?\d(-\d)?%?/gi, " ")
     .replace(/\d{4}-\d{2}-\d{2}/g, " ")
-    .replace(/\d{1,2}\s?(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[A-Za-z]*/gi, " ");
+    .replace(/\d{1,3}\s*[-–]\s*\d{1,3}/g, " ") // ช่วงอายุ เช่น 25-35 / 36-45
+    .replace(/\d{1,3}\s*\+\+/g, " ")           // 55++
+    .replace(/\d{1,2}\s?(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[A-Za-z]*/gi, " ")
+    .replace(/\b\d{1,2}[:.]\d{2}\b/g, " ");    // เวลา
   const nums = [...cleaned.matchAll(/(?<![\d.%])(\d{2,5})(?![\d.%])/g)].map((m) => parseInt(m[1], 10));
-  const plausible = nums.filter((v) => v >= 30 && v <= 99999);
+  // 3) รับเฉพาะงบที่ทีมตั้งจริง (ลงท้าย 0 และอยู่ในช่วงที่เป็นไปได้) — กันเลขสุ่มอย่าง 1031/1306
+  const plausible = nums.filter((v) => v >= 30 && v <= 20000 && v % 10 === 0);
   return plausible.length ? plausible[plausible.length - 1] : null;
 }
 
