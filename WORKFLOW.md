@@ -113,7 +113,7 @@ user บอก: **"ทักเยอะก็จริง แต่ส่วน
 4. สิ่งที่จะปรับ (คำสั่งพร้อมตัวเลข + คาดการณ์กำไรที่ได้เพิ่ม)
 5. suggest แบรนด์ (เรื่องที่แอดแก้เองไม่ได้ — สคริปต์แชท/ราคา/AOV/สต๊อก)
 
-**KPI default:** ROAS ≥2 · %ตอบกลับ ≥60% · %ปิดการขาย ≥15% (ปรับผ่าน `?kpiRoas=&kpiReply=&kpiConv=`)
+**KPI default:** ROAS ≥3.5 (เดิม 2 — ดู PHASE 9) · %ตอบกลับ ≥60% · %ปิดการขาย ≥15% (ปรับผ่าน `?kpiRoas=&kpiReply=&kpiConv=`)
 
 ---
 
@@ -134,13 +134,19 @@ user บอก: **"ทักเยอะก็จริง แต่ส่วน
 
 ### บันไดตัดสินใหม่ (`lib/decide.ts`)
 ```
-0. ใช้ < ฿300         → ⏳ รอข้อมูล (ยังเป็น learning ห้ามแตะ)
+0. ยิงไม่ถึง 3 วัน หรือใช้ < ฿300 → ⏳ ยังตัดสินไม่ได้ (learning ห้ามแตะ)
 1. แอด ENG/View       → 🔵 ไม่ตัดจาก ROAS (คนละวัตถุประสงค์)
                          ยกเว้น ทัก>0 แต่ตอบ 0 → 🔴 ปิด
-2. มียอดขาย           → ROAS ≥2 🟢 · 1–2 🟡 · <1 🔴
+2. มียอดขาย           → ROAS ≥3.5 🟢 สเกล · 2–3.5 🟡 เริ่มแย่ · 1–2 🟠 ลดงบ · <1 🔴 ปิด
 3. ยอด ๐ แต่กลุ่มมี    → 🔴 ปิด (ระบบนับยอดใช้ได้ = ตัวนี้ขายไม่ออกจริง)
 4. ยอด ๐ ทั้งกลุ่ม     → ⚫ เช็คการนับยอด (ยังชี้ไม่ได้) + ดู cpReply ประกอบ
 ```
+
+**เส้น ROAS 3.5 มาจาก user เอง (10 ส.ค. 69):** *"ROAS > 3.5 ถึงจะให้ scale ต่ำกว่านี้ถือว่าเริ่มแย่ละ"*
+ตอนแรกตั้งไว้ 2 · แก้ที่ `ROAS_SCALE` ใน `lib/decide.ts` ที่เดียว
+
+**กัน learning phase:** เจอจริง — clone ที่เพิ่งเกิดเมื่อวาน ใช้ ฿681 ยอด ๐ โดนสั่ง "ปิด"
+ทั้งที่กติกาบ้านคืออายุ < 3 วันห้ามแตะ → เพิ่ม `activeDays` ใน `aggregate.ts`
 - ธงทุกตัว**มีเหตุผลกำกับ** (ชี้เมาส์ที่ธง) เช่น *"ใช้ ฿817 ยอดขาย ๐ ทั้งที่ตัวอื่นในกลุ่มเดียวกันขายได้"*
 - แถบ 🎯 แนะนำ เรียง "ปิด" ตาม **เงินที่ติดลบจริง** (spend−revenue) ไม่ใช่ยอดใช้จ่าย
 - 🏦 ราย account โชว์ ROAS ของบัญชี + เหตุผลรายตัว
@@ -163,21 +169,26 @@ user บอก: **"ทักเยอะก็จริง แต่ส่วน
 
 ---
 
-## PHASE 10 — ส่ง Digest เข้า LINE ทุกวันจันทร์
+## PHASE 10 — สรุปเข้า Telegram ทุกเช้า
 
 ```
-lib/digest-load.ts       โหลดข้อมูล+สร้าง digest (ใช้ร่วมกัน เว็บ/LINE จะได้ไม่คำนวณคนละแบบ)
-lib/digest-text.ts       แปลง digest → ข้อความ LINE 4 ก้อน
-app/api/digest/line/     endpoint push (กันด้วย CRON_SECRET เอง อยู่นอกกำแพงรหัส)
-.github/workflows/weekly-digest-line.yml   จันทร์ 01:00 UTC = 08:00 น. ไทย
+lib/digest-load.ts       โหลดข้อมูล+สร้าง digest (ใช้ร่วมกัน เว็บ/Telegram จะได้ไม่คำนวณคนละแบบ)
+lib/daily.ts             สรุปรายวัน + สรุปสัปดาห์ → ข้อความ Telegram
+app/api/digest/telegram/ endpoint push (กันด้วย CRON_SECRET เอง อยู่นอกกำแพงรหัส)
+.github/workflows/daily-telegram.yml   ทุกวัน 01:00 UTC = 08:00 น. ไทย
 ```
 
-- `?dry=1` = ดูข้อความที่จะส่งโดยไม่ส่งจริง (ทดสอบได้ก่อนใส่ token)
-- `&until=YYYY-MM-DD` = ย้อนสัปดาห์เก่า · workflow ตั้งเป็น **เมื่อวาน (อาทิตย์)** เพื่อไม่เอาวันจันทร์ที่ยังไม่จบมาปน
-- ข้อความจริงยาว 440–730 ตัวอักษร/ก้อน (ลิมิต LINE 5,000/ก้อน · 5 ก้อน/ครั้ง)
-- ก้อน 1 อ่านจบก็ตัดสินใจได้: หัวเรื่อง 1 บรรทัด → ตัวเลขรวม → KPI ผ่าน/ไม่ผ่าน
+**หลักคิด: รายงาน "เมื่อวาน" แต่ตัดสินใจจาก "7 วันล่าสุด"**
+ข้อมูลวันเดียวเหวี่ยงเกินจะสั่งปิด/สเกล (เสาร์-อาทิตย์ไม่เหมือนวันธรรมดา + ออเดอร์บางส่วนมาทีหลัง)
+แต่คนอ่านอยากรู้ว่าเมื่อวานเป็นยังไง → เอาตัวเลขเมื่อวานมาโชว์ เอาธงจาก 7 วันมาสั่งงาน
 
-**ยังต้องทำเองก่อนใช้งาน:** ใส่ `LINE_CHANNEL_ACCESS_TOKEN` + `LINE_TO` ใน Vercel
+- `?dry=1` = ดูข้อความที่จะส่งโดยไม่ส่งจริง · `&date=YYYY-MM-DD` = ย้อนวัน
+- เช้าวันจันทร์แนบสรุปสัปดาห์เป็นข้อความที่ 2 ให้เอง
+- ข้อความจริงยาว ~870 ตัวอักษร (ลิมิต Telegram 4,096)
+- **ทำไมเปลี่ยนจาก LINE:** Telegram ไม่ต้องสมัคร OA ไม่ต้องยืนยันธุรกิจ ไม่มีเพดานข้อความ
+  ตั้งเสร็จใน 3 นาที (@BotFather → `/newbot` → `getUpdates` เอา chat id)
+
+**ยังต้องทำเองก่อนใช้งาน:** ใส่ `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` ใน Vercel
 (ขั้นตอนละเอียดอยู่ที่ `~/Desktop/claude/ads-dashboard-handoff/2-ติดตั้ง.md` ขั้น 8)
 
 ---
@@ -185,8 +196,8 @@ app/api/digest/line/     endpoint push (กันด้วย CRON_SECRET เอ
 ## 🔁 งานประจำ (ทำซ้ำได้)
 
 **ดูผลรายวัน** → เปิด dashboard → 14 วัน → สลับ "สินค้า" → เมตริก "ROAS"
-**สรุปสัปดาห์** → `/digest` (หรือปุ่ม 📅 Digest) · เข้า LINE เองทุกจันทร์ 08:00
-**ทดสอบข้อความ LINE** → `/api/digest/line?key=<CRON_SECRET>&dry=1`
+**สรุปสัปดาห์** → `/digest` (หรือปุ่ม 📅 Digest)
+**สรุปรายวัน** → เข้า Telegram เองทุกเช้า 08:00 · ทดสอบ `/api/digest/telegram?key=<CRON_SECRET>&dry=1`
 **เติมข้อมูลย้อนหลัง** → `/api/sync?key=<CRON_SECRET>&since=&until=` ก้อนละ ≤4 วัน
 **deploy** → `git add <ไฟล์ใหม่>` แล้ว `node scripts/deploy-api.mjs`
 **เว็บช้า/504** → เช็ค Supabase pause ก่อน
@@ -225,12 +236,12 @@ app/api/digest/line/     endpoint push (กันด้วย CRON_SECRET เอ
 | `SUPABASE_SERVICE_ROLE_KEY` | ✅ | เขียน cache (**อย่าเอาขึ้น client**) |
 | `META_AD_ACCOUNTS` | – | จำกัดเฉพาะบางบัญชี (ว่าง = ทุกบัญชีที่ token เห็น) |
 | `SYNC_DAYS` | – | sync ย้อนหลังกี่วันต่อรอบ (default 7) |
-| `LINE_CHANNEL_ACCESS_TOKEN` | – | ส่ง digest เข้า LINE (PHASE 10) |
-| `LINE_TO` | – | userId/groupId ปลายทาง (หลายตัวคั่น `,`) |
-| `DASHBOARD_URL` | – | ใส่ในลิงก์ที่ส่งเข้า LINE (ว่าง = เดาจาก request) |
+| `TELEGRAM_BOT_TOKEN` | – | ส่งสรุปเข้า Telegram (PHASE 10) — จาก @BotFather |
+| `TELEGRAM_CHAT_ID` | – | chat id ปลายทาง (หลายห้องคั่น `,`) |
+| `DASHBOARD_URL` | – | ใส่ในลิงก์ที่ส่งเข้า Telegram (ว่าง = เดาจาก request) |
 | `TIKTOK_ACCESS_TOKEN` / `TIKTOK_ADVERTISER_IDS` | – | ฝั่ง TikTok (ยังไม่ได้ต่อ) |
 
-**GitHub secret ที่ต้องตั้ง:** `CRON_SECRET` (ให้ตรงกับใน Vercel) — ใช้ทั้ง keepalive และ digest→LINE
+**GitHub secret ที่ต้องตั้ง:** `CRON_SECRET` (ให้ตรงกับใน Vercel) — ใช้ทั้ง keepalive และ digest→Telegram
 
 ⚠️ `CRON_SECRET` / `SUPABASE_SERVICE_ROLE_KEY` ตั้งเป็น **Sensitive** ไว้ = อ่านกลับไม่ได้อีก
 (`vercel env pull` จะได้คำว่า `[SENSITIVE]`) — ถ้าต้องใช้ ต้อง rotate ใหม่แล้ว `gh secret set` ให้ตรง
@@ -242,7 +253,7 @@ app/api/digest/line/     endpoint push (กันด้วย CRON_SECRET เอ
 app/api/metrics/route.ts   3-tier + ช่วงเวลา + เทียบงวด
 app/api/sync/route.ts      cron target → Supabase
 app/api/digest/route.ts    Weekly Digest API
-app/api/digest/line/       ★ push digest เข้า LINE (มี ?dry=1)
+app/api/digest/telegram/   ★ push สรุปเข้า Telegram (มี ?dry=1)
 app/dashboard.tsx          UI หลัก
 app/digest/                หน้า Digest
 lib/meta.ts                Graph API + quality metrics + retry
@@ -250,13 +261,13 @@ lib/aggregate.ts           รวมทุกระดับ + qualityOf()
 lib/content.ts             parseProduct / parseTheme / parseAudience
 lib/decide.ts              ★ เกณฑ์ธง ปิด/สเกล (ROAS นำ) — แก้เกณฑ์ที่นี่ที่เดียว
 lib/digest.ts              logic 5 หัวข้อ
-lib/digest-load.ts         โหลด+สร้าง digest (เว็บกับ LINE ใช้ตัวเดียวกัน)
-lib/digest-text.ts         digest → ข้อความ LINE
+lib/digest-load.ts         โหลด+สร้าง digest (เว็บกับ Telegram ใช้ตัวเดียวกัน)
+lib/daily.ts               สรุปรายวัน → ข้อความ Telegram
 lib/supabase.ts            cache layer (+ graceful fallback)
-middleware.ts              กำแพงรหัส (ยกเว้น /api/sync, /api/digest/line)
+middleware.ts              กำแพงรหัส (ยกเว้น /api/sync, /api/digest/telegram)
 scripts/deploy-api.mjs     ★ deploy ทางเดียวที่ใช้ได้ (ส่งเฉพาะไฟล์ที่ git track)
 .github/workflows/keepalive-sync.yml       กัน Supabase หลับ (ทุก 2 ชม.)
-.github/workflows/weekly-digest-line.yml   ★ digest → LINE (จันทร์ 08:00)
+.github/workflows/daily-telegram.yml       ★ สรุป → Telegram (ทุกเช้า 08:00)
 ```
 
 ---
