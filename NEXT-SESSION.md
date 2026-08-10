@@ -121,6 +121,7 @@ churn: 53 แอดหยุดใน 7 วัน กินงบ ฿18,717 (ย
 
 ## ✅ ก่อนบอกว่าเสร็จ ต้องทำครบ
 
+- [ ] `node scripts/selftest.mjs` ผ่าน 49/49 (แก้กติกาตัดสินใจเมื่อไหร่ ต้องเพิ่มเทสด้วย)
 - [ ] `npx tsc --noEmit` ผ่าน + `npm run build` ผ่าน
 - [ ] `git add` ไฟล์ใหม่ → `node scripts/deploy-api.mjs` → READY
 - [ ] **เปิดเบราว์เซอร์จริง** เช็คหน้าที่แก้: `innerWidth > 0` ก่อน แล้ววัด overflow = 0 · ไม่มี NaN/undefined · console error 0 · ทั้ง 2 ธีม
