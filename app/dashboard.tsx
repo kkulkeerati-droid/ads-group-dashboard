@@ -61,6 +61,21 @@ function cprStatus(cpr: number, target?: number): "good" | "warn" | "bad" | "" {
   if (cpr > target * 1.3) return "bad";
   return "warn";
 }
+// % คนกลับมาตอบ — ต่ำ = แชทผีเยอะ (เกณฑ์จาก user: 60%+ ปกติ, <40% ผิดปกติ)
+function replyStatus(rate: number): "good" | "warn" | "bad" | "" {
+  if (!rate) return "";
+  if (rate >= 60) return "good";
+  if (rate >= 40) return "warn";
+  return "bad";
+}
+// ROAS — เกณฑ์ธุรกิจ: >=2 ดี, 1-2 พอไหว, <1 ขาดทุน
+function roasStatus(r: number): "good" | "warn" | "bad" | "" {
+  if (!r) return "";
+  if (r >= 2) return "good";
+  if (r >= 1) return "warn";
+  return "bad";
+}
+
 // ธงตัดสินใจต่อ ad: 🟢 สเกล / 🔴 ปิด / 🟡 เฝ้าดู
 function adDecision(cpr: number, results: number, spend: number, target?: number): { label: string; cls: string } | null {
   if (!target) return null;
@@ -342,6 +357,7 @@ export default function Dashboard() {
               )}
             </div>
             <button className="btn" onClick={exportCSV}>⬇︎ CSV</button>
+            <a className="btn" href="/digest" title="สรุปรายสัปดาห์ 5 หัวข้อ">📅 Digest</a>
             <button className="btn" onClick={() => window.print()}>🖨 PDF</button>
             <button className="btn" onClick={shareLink}>{copied ? "✓ คัดลอกแล้ว" : "🔗 แชร์"}</button>
             <button className="btn" onClick={async () => { await fetch("/api/logout", { method: "POST" }); window.location.href = "/login"; }} title="ออกจากระบบ">⎋ ออก</button>
@@ -475,8 +491,11 @@ export default function Dashboard() {
                     <SortTh label="แพลตฟอร์ม" col="platform" sort={accSort} setSort={setAccSort} />
                     {groups.map((g) => <SortTh key={g.key} label={g.label} col={`g:${g.key}`} sort={accSort} setSort={setAccSort} />)}
                     <SortTh label="รวม" col="spend" sort={accSort} setSort={setAccSort} />
-                    <SortTh label="ผลลัพธ์" col="results" sort={accSort} setSort={setAccSort} />
-                    <SortTh label="CPR" col="cpr" sort={accSort} setSort={setAccSort} />
+                    <SortTh label="ทัก" col="results" sort={accSort} setSort={setAccSort} />
+                    <SortTh label="ตอบจริง" col="replies" sort={accSort} setSort={setAccSort} />
+                    <SortTh label="%ตอบ" col="replyRate" sort={accSort} setSort={setAccSort} />
+                    <SortTh label="฿/คนตอบ" col="cpReply" sort={accSort} setSort={setAccSort} />
+                    <SortTh label="ROAS" col="roas" sort={accSort} setSort={setAccSort} />
                     <th style={{ width: 120 }}>สัดส่วน</th>
                   </tr>
                 </thead>
@@ -488,7 +507,10 @@ export default function Dashboard() {
                       {groups.map((g) => <td key={g.key}>{a.byGroup[g.key] ? nInt(a.byGroup[g.key]) : "–"}</td>)}
                       <td><strong>฿{nInt(a.spend)}</strong></td>
                       <td>{nInt(a.results)}</td>
-                      <td>{a.cpr ? "฿" + nMoney(a.cpr) : "–"}</td>
+                      <td className={a.replies ? "good" : ""}>{nInt(a.replies)}</td>
+                      <td className={replyStatus(a.replyRate)}>{a.replyRate ? a.replyRate.toFixed(0) + "%" : "–"}</td>
+                      <td><b>{a.cpReply ? "฿" + nMoney(a.cpReply) : "–"}</b></td>
+                      <td className={roasStatus(a.roas)}>{a.roas ? a.roas.toFixed(2) : "–"}</td>
                       <td>
                         <div className="stack">
                           {groups.map((g) => a.byGroup[g.key] > 0 ? (
@@ -613,8 +635,12 @@ export default function Dashboard() {
                     <SortTh label="กลุ่ม" col="group" sort={adSort} setSort={setAdSort} />
                     <SortTh label="บัญชี" col="accountName" sort={adSort} setSort={setAdSort} />
                     <SortTh label="spend" col="spend" sort={adSort} setSort={setAdSort} />
-                    <SortTh label="ผลลัพธ์" col="results" sort={adSort} setSort={setAdSort} />
-                    <SortTh label="CPR" col="cpr" sort={adSort} setSort={setAdSort} />
+                    <SortTh label="ทัก" col="results" sort={adSort} setSort={setAdSort} />
+                    <SortTh label="ตอบจริง" col="replies" sort={adSort} setSort={setAdSort} />
+                    <SortTh label="%ตอบ" col="replyRate" sort={adSort} setSort={setAdSort} />
+                    <SortTh label="฿/คนตอบ" col="cpReply" sort={adSort} setSort={setAdSort} />
+                    <SortTh label="ROAS" col="roas" sort={adSort} setSort={setAdSort} />
+                    <SortTh label="฿/ทัก" col="cpr" sort={adSort} setSort={setAdSort} />
                     <SortTh label="CPM" col="cpm" sort={adSort} setSort={setAdSort} />
                     <th>แนะนำ</th>
                   </tr>
@@ -630,6 +656,10 @@ export default function Dashboard() {
                         <td className="name-cell">{a.accountName}</td>
                         <td>฿{nMoney(a.spend)}</td>
                         <td>{nInt(a.results)}</td>
+                        <td className={a.replies ? "good" : ""}>{nInt(a.replies)}</td>
+                        <td className={replyStatus(a.replyRate)}>{a.replyRate ? a.replyRate.toFixed(0) + "%" : "–"}</td>
+                        <td className={a.cpReply ? "" : ""}><b>{a.cpReply ? "฿" + nMoney(a.cpReply) : "–"}</b></td>
+                        <td className={roasStatus(a.roas)}>{a.roas ? a.roas.toFixed(2) : "–"}</td>
                         <td className={cprStatus(a.cpr, g?.target)}>{a.cpr ? "฿" + nMoney(a.cpr) : "–"}</td>
                         <td>{a.cpm ? "฿" + nMoney(a.cpm) : "–"}</td>
                         <td>{dec ? <span className={"pill " + dec.cls}>{dec.label}</span> : "–"}</td>

@@ -324,3 +324,10 @@ table.mini td, table.mini th { padding: 7px 9px; font-size: 12.5px; }
   .wrap { max-width: 100%; padding-top: 8px; }
 }
 .view-switch { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+/* ── 📅 Weekly Digest ─────────────────────────────────────────────── */
+.dg-num { display: inline-flex; width: 22px; height: 22px; align-items: center; justify-content: center; border-radius: 7px; background: var(--accent); color: #fff; font-size: 12px; font-weight: 800; margin-right: 6px; }
+.dg-list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 7px; }
+.dg-list li { font-size: 13.5px; line-height: 1.55; }
+.dg-list li.good { color: var(--good); }
+.dg-list li.bad { color: var(--bad); }
+.dg-list li.warn { color: var(--warn); }
