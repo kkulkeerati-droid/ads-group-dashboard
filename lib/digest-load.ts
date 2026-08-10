@@ -65,3 +65,9 @@ export async function loadDigest(opts: {
     return { ok: false, status: 500, error: e?.message || String(e) };
   }
 }
+
+/** แถวดิบของช่วงที่ขอ (ใช้กับสรุป 17:00 ที่ต้องคำนวณเทรนด์รายแอดเอง) */
+export async function loadRows(since: string, until: string) {
+  if (!supabaseEnabled()) return null;
+  return (await readRows("all", since, until)) as AdRow[];
+}

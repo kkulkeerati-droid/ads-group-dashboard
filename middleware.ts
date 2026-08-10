@@ -13,7 +13,8 @@ export async function middleware(req: NextRequest) {
     pathname.startsWith("/login") ||
     pathname.startsWith("/api/login") ||
     pathname.startsWith("/api/sync") ||
-    pathname.startsWith("/api/digest/telegram")
+    pathname.startsWith("/api/digest/telegram") ||
+    (pathname.startsWith("/api/brief") && req.nextUrl.searchParams.get("send") === "1")
   ) {
     return NextResponse.next();
   }

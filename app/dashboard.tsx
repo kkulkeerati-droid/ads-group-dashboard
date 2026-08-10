@@ -391,6 +391,7 @@ export default function Dashboard() {
               )}
             </div>
             <button className="btn" onClick={exportCSV}>⬇︎ CSV</button>
+            <a className="btn primary" href="/brief" title="วันนี้เป็นไง พรุ่งนี้ scale/หยุด/clone อะไร">📋 แผนพรุ่งนี้</a>
             <a className="btn" href="/digest" title="สรุปรายสัปดาห์ 5 หัวข้อ">📅 Digest</a>
             <button className="btn" onClick={() => window.print()}>🖨 PDF</button>
             <button className="btn" onClick={shareLink}>{copied ? "✓ คัดลอกแล้ว" : "🔗 แชร์"}</button>

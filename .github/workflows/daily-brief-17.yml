@@ -1,0 +1,40 @@
+# สรุปบ่าย + แผนพรุ่งนี้ → Telegram ทุกวัน 17:00 น. ไทย
+# - 10:00 UTC = 17:00 น. ไทย
+# - ทำไม 17:00: พีคเย็นของไทยคือ 18-21 น. — ถ้าจะขยับงบให้ทันรอบนั้น ต้องกดก่อน 17:00
+#   สรุปนี้เลยมาถึงมือ "ก่อน" ช่วงที่เงินเดินแรงที่สุดของวัน
+# - ตัวเลข "วันนี้" ยังไม่จบวัน (ยอดขายเข้าช้ากว่าค่าแอด) → ใช้ดูจังหวะเท่านั้น
+#   คำสั่ง scale/หยุด/clone ทั้งหมดตัดจาก 7 วันที่จบวันแล้ว
+name: daily-brief-17
+on:
+  schedule:
+    - cron: "0 10 * * *"
+  workflow_dispatch:
+    inputs:
+      dry:
+        description: "ทดสอบอย่างเดียว ไม่ส่งเข้า Telegram"
+        type: boolean
+        default: false
+      date:
+        description: "วันที่จะสรุป (YYYY-MM-DD, ว่าง = วันนี้)"
+        type: string
+        default: ""
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Push afternoon brief to Telegram
+        run: |
+          BASE="${{ vars.DASHBOARD_URL || 'https://dashboard-ads-thanatos.vercel.app' }}"
+          URL="$BASE/api/brief?send=1&key=${{ secrets.CRON_SECRET }}"
+          [ -n "${{ inputs.date }}" ] && URL="$URL&date=${{ inputs.date }}"
+          [ "${{ inputs.dry }}" = "true" ] && URL="$URL&dry=1"
+          BODY=$(curl -sS --max-time 115 -w "\n%{http_code}" "$URL")
+          CODE=$(echo "$BODY" | tail -1)
+          echo "$BODY" | head -c 4000
+          echo ""
+          # 503 = ยังไม่ได้ตั้ง Telegram → ข้าม ไม่ใช่พัง (ไม่งั้นมีเมล fail ทุกวัน)
+          if [ "$CODE" = "503" ]; then
+            echo "::warning::ยังไม่ได้ตั้ง Telegram — ข้ามรอบนี้"
+            exit 0
+          fi
+          [ "$CODE" = "200" ] || { echo "::error::ส่งสรุปบ่ายไม่สำเร็จ (HTTP $CODE)"; exit 1; }
