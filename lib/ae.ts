@@ -38,7 +38,10 @@ export const FUNNEL_LABEL: Record<Funnel, string> = {
 export interface FunnelCall { stage: Funnel; why: string; sure: boolean }
 
 // คำที่แปลว่า "ตัดคนกลุ่มนี้ออก" — ตัดออกแล้วที่เหลือคือคนใหม่ = prospecting
-const EXCLUDE_RE = /\bEX\s?(ALL|AI|\d{1,3}|ซื้อ|ทักซื้อ|ทัก)\b/;
+// ⚠️ ห้ามใส่ \b ปิดท้ายคำไทย — \b ดูจาก [A-Za-z0-9_] อักษรไทยไม่นับเป็น word char
+//    "Exซื้อ/600" จึงไม่มี boundary ระหว่าง ซื้อ กับ / → \b ทำให้ไม่ match เลย (เคยพลาดมาแล้ว)
+//    เรียง ทักซื้อ ก่อน ทัก/ซื้อ เพื่อให้จับตัวยาวสุดก่อน
+const EXCLUDE_RE = /\bEX\s?(ALL\b|AI\b|\d{1,3}\b|ทักซื้อ|ซื้อ|ทัก)/;
 
 export function classifyFunnel(adName: string): FunnelCall {
   const n = (adName || "").toUpperCase();
@@ -159,7 +162,10 @@ export function classifyObjective(adName: string): string {
 }
 
 // ─── 2) จับ clone กับร่องรอยการขยับงบที่ทีมเขียนไว้ในชื่อ ──────────────
-const CLONE_RE = /\s*[-–]?\s*(สำเนา|copy|clone)\b.*$/i;
+// ⚠️ \b ใช้กับ "สำเนา" ไม่ได้ (อักษรไทยไม่ใช่ word char) — ของเดิมใส่ \b ไว้
+//    ทำให้ clone ที่ Meta ตั้งชื่อว่า "- สำเนา" ไม่เคยถูกจับเป็น clone เลย
+//    เหลือแต่ตัวที่ลงท้าย "Clone 2026-08-07 1515" (อังกฤษ) ที่ \b ทำงานได้
+const CLONE_RE = /\s*[-–]?\s*(สำเนา|(?:copy|clone)\b).*$/i;
 
 export function cloneInfo(adName: string): { isClone: boolean; parent: string | null } {
   if (!CLONE_RE.test(adName)) return { isClone: false, parent: null };
@@ -375,8 +381,10 @@ export function callFor(
   // ── กติกาแอดมด (ebook บทที่ 34): กินงบเกิน 30% ของงบวันแล้วยังไม่มีการซื้อ = คัดตัวตายออก ──
   // ใช้ได้เฉพาะตัวที่เขียนงบไว้ในชื่อ (เช่น "AI/AW/600/12Jul") — ตัวที่ไม่ได้เขียนก็ข้ามไป
   // ต้องเช็คก่อน MIN_SPEND_TO_JUDGE เพราะแอดมดงบ ฿300/วัน จะไม่มีวันถึง ฿300 ใน 1 วัน
+  // ⚠️ ต้องไม่ทำงานเมื่อ "มีคนกลับมาคุยอยู่" — บทที่ 34 เองก็บอกว่าปิดแล้วให้แอดมินลากแชตต่อ
+  //    ถ้ามีคนคุยอยู่จริง สิ่งที่ต้องแก้คือขั้นปิดการขาย (บทที่ 4) ไม่ใช่ฆ่าแอดที่กำลังส่งคนมาให้
   const antKill = v.budget ? v.budget * ANT_KILL_BUDGET_SHARE : 0;
-  if (antKill && a.purchases === 0 && a.spend >= antKill && ctx.peerHasRevenue && v.activeDays >= 1) {
+  if (antKill && a.purchases === 0 && a.replies === 0 && a.spend >= antKill && ctx.peerHasRevenue && v.activeDays >= 1) {
     return { action: "STOP", money: a.spend,
       why: `งบในชื่อ ${M(v.budget!)}/วัน · ใช้ไป ${M(a.spend)} แล้วยังไม่มีออเดอร์สักรายการ`,
       how: `กติกาแอดมด: เกิน ${Math.round(ANT_KILL_BUDGET_SHARE * 100)}% ของงบวันแล้วยังไม่มีการซื้อ = ปิดก่อน · ให้แอดมินลากแชตกระตุ้นปิดการขาย ถ้ามียอดเข้าค่อยเปิดกลับ` };
@@ -732,12 +740,14 @@ export function audienceTodos(views: AdView[]): string[] {
 export interface CloneCheck { clone: AdView; parent: AdView; verdict: "kill" | "keep" | "wait"; why: string }
 
 export function cloneChecks(views: AdView[]): CloneCheck[] {
+  // key ด้วย accountId ด้วย — ชื่อแอดซ้ำกันข้ามบัญชีมีจริง (ทีมใช้ชื่อชุดเดียวกันหลายบัญชี)
+  // ถ้า key ด้วยชื่อเปล่า clone ในบัญชี A จะไปจับคู่กับตัวแม่ในบัญชี B แล้วเทียบต้นทุนผิดคู่
   const byName = new Map<string, AdView>();
-  for (const v of views) byName.set(v.adName.trim(), v);
+  for (const v of views) byName.set(`${v.accountId}::${v.adName.trim()}`, v);
   const out: CloneCheck[] = [];
   for (const v of views) {
     if (!v.isClone || !v.parent) continue;
-    const p = byName.get(v.parent);
+    const p = byName.get(`${v.accountId}::${v.parent}`);
     if (!p) continue;
     if (v.activeDays < 1 || v.all.spend < 150) {
       out.push({ clone: v, parent: p, verdict: "wait", why: `เพิ่งแตกมา ${v.activeDays} วัน (฿${Math.round(v.all.spend)}) — รอครบ 24 ชม. ก่อนตัดสิน` });
@@ -766,16 +776,18 @@ export const MAX_CLONES_PER_PARENT = 3;
 export interface CloneFamily { parent: string; clones: number; spend: number; revenue: number; roas: number; over: boolean }
 
 export function cloneFamilies(views: AdView[]): CloneFamily[] {
-  const fam = new Map<string, { clones: number; spend: number; revenue: number }>();
+  // นับแยกตามบัญชี — ตัวแม่ชื่อเดียวกันคนละบัญชีคือคนละครอบครัว ไม่ควรเอามารวมกัน
+  const fam = new Map<string, { parent: string; clones: number; spend: number; revenue: number }>();
   for (const v of views) {
     if (!v.isClone || !v.parent) continue;
-    const f = fam.get(v.parent) || { clones: 0, spend: 0, revenue: 0 };
+    const key = `${v.accountId}::${v.parent}`;
+    const f = fam.get(key) || { parent: v.parent, clones: 0, spend: 0, revenue: 0 };
     f.clones++; f.spend += v.all.spend; f.revenue += v.all.revenue;
-    fam.set(v.parent, f);
+    fam.set(key, f);
   }
-  return [...fam.entries()]
-    .map(([parent, f]) => ({
-      parent, clones: f.clones, spend: f.spend, revenue: f.revenue,
+  return [...fam.values()]
+    .map((f) => ({
+      parent: f.parent, clones: f.clones, spend: f.spend, revenue: f.revenue,
       roas: f.spend ? f.revenue / f.spend : 0, over: f.clones > MAX_CLONES_PER_PARENT,
     }))
     .sort((a, b) => b.clones - a.clones || b.spend - a.spend);
