@@ -30,4 +30,10 @@ jobs:
           CODE=$(echo "$BODY" | tail -1)
           echo "$BODY" | head -c 4000
           echo ""
+          # 503 = ยังไม่ได้ตั้ง TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID
+          # ถือว่า "ข้าม" ไม่ใช่ "พัง" — ไม่งั้นจะมีเมลแจ้ง fail เด้งทุกเช้าจนกว่าจะตั้ง token
+          if [ "$CODE" = "503" ]; then
+            echo "::warning::ยังไม่ได้ตั้ง Telegram — ข้ามรอบนี้ (ตั้ง TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID ใน Vercel แล้วจะส่งเอง)"
+            exit 0
+          fi
           [ "$CODE" = "200" ] || { echo "::error::ส่ง Telegram ไม่สำเร็จ (HTTP $CODE)"; exit 1; }
