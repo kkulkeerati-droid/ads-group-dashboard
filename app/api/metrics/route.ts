@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchMetaAds } from "@/lib/meta";
 import { fetchTikTokAds } from "@/lib/tiktok";
-import { supabaseEnabled, readRows, earliestDate } from "@/lib/supabase";
+import { supabaseEnabled, readRows, earliestDate, readAdsets } from "@/lib/supabase";
 import { aggregate, buildDemoSeries, toPrevTotals } from "@/lib/aggregate";
 import { parseGroupsParam } from "@/lib/groups";
 import type { AdRow, AccountIssue } from "@/lib/types";
@@ -81,6 +81,11 @@ export async function GET(req: NextRequest) {
           const prevRows = filterAcc(await readRows(platform, prevSince, prevUntil));
           const m = aggregate(rows, { source: "supabase", platform, since, until, groupsConfig, warnings });
           m.prev = toPrevTotals(prevRows, prevSince, prevUntil, groupsConfig);
+          // targeting/งบจริง — snapshot แยกตาราง ล้มได้โดยไม่กระทบตัวเลขหลัก
+          const adsets = await readAdsets(platform);
+          if (adsets.length) {
+            m.adsets = acctFilter.length ? adsets.filter((a) => acctFilter.includes(a.accountId)) : adsets;
+          }
           return NextResponse.json(m);
         }
       } else if (earliest !== null) {

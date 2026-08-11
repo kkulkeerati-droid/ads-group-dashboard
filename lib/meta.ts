@@ -1,4 +1,4 @@
-import type { AdRow, AccountIssue } from "./types";
+import type { AdRow, AccountIssue, AdsetInfo } from "./types";
 
 const VERSION = process.env.META_API_VERSION || "v21.0";
 const GRAPH = `https://graph.facebook.com/${VERSION}`;
@@ -41,6 +41,8 @@ interface FetchArgs {
   accountIds?: string[];
   since: string;
   until: string;
+  /** ดึง targeting/งบระดับ adset ด้วยไหม — payload หนัก ปิดไว้ตอน backfill ก้อนใหญ่ */
+  withAdsets?: boolean;
 }
 
 // error ชั่วคราวของ Meta ที่ retry แล้วมักหาย (service unavailable / rate limit)
@@ -83,6 +85,7 @@ function extractResults(actions: any[]): { results: number; resultType?: string 
 export interface MetaResult {
   rows: AdRow[];
   issues: AccountIssue[];
+  adsets: AdsetInfo[];
 }
 
 // รายชื่อบัญชี + สถานะ (แยกบัญชีที่ดึงได้/ดึงไม่ได้)
@@ -130,19 +133,29 @@ async function fetchAccountAds(
 ): Promise<AdRow[]> {
   const rows: AdRow[] = [];
   const timeRange = encodeURIComponent(JSON.stringify({ since, until }));
+  // ⭐ ad_id คือ key จริง — ชื่อแอดซ้ำกันทั้งชุดเพราะทีมยิง 1:1:3 (บั๊กราก 11 ส.ค. 69)
+  //    adset_id/campaign_id แถมมาฟรีในคอลเดียวกัน ใช้ join targeting + งบจริงทีหลัง
   let url =
     `${GRAPH}/act_${accountId}/insights` +
-    `?level=ad&fields=ad_name,spend,impressions,reach,actions,action_values&time_increment=1` +
+    `?level=ad&fields=ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,` +
+    `spend,impressions,reach,actions,action_values&time_increment=1` +
     `&time_range=${timeRange}&limit=500&access_token=${token}`;
   while (url) {
     const json = await gget(url);
     for (const r of json.data || []) {
       const { results, resultType } = extractResults(r.actions);
+      const purchases = Math.round(findFirst(r.actions, PURCHASE_TYPES));
+      const revenue = findFirst(r.action_values, PURCHASE_TYPES);
       rows.push({
         platform: "meta",
         accountId,
         accountName,
+        adId: r.ad_id || undefined,
         adName: r.ad_name || "",
+        adsetId: r.adset_id || undefined,
+        adsetName: r.adset_name || undefined,
+        campaignId: r.campaign_id || undefined,
+        campaignName: r.campaign_name || undefined,
         spend: parseFloat(r.spend || "0") || 0,
         impressions: parseInt(r.impressions || "0", 10) || 0,
         reach: parseInt(r.reach || "0", 10) || 0,
@@ -151,13 +164,92 @@ async function fetchAccountAds(
         date: r.date_start,
         // คุณภาพ: depth_2 = คนกลับมาตอบจริง (fallback replied_7d ถ้าไม่มี)
         replies: Math.round(findAction(r.actions, A_DEPTH2) || findAction(r.actions, A_REPLIED)),
-        purchases: Math.round(findFirst(r.actions, PURCHASE_TYPES)),
-        revenue: findFirst(r.action_values, PURCHASE_TYPES),
+        purchases,
+        revenue,
+        // ⚠️ Meta นับ onsite_conversion.purchase เป็น "ซื้อ" แม้ไม่มีมูลค่าติดมาเลย
+        //    วัดจริง 3 ส.ค. 69: P-FLOW 2 มี 61 ซื้อ แต่ 35 ตัว (57%) มูลค่า ๐
+        //    แอดหนึ่งใช้ ฿6.41 นับ 11 ซื้อ มูลค่า ๐ — เอาไปนับบันไดออเดอร์ไม่ได้
+        purchasesValued: revenue > 0 ? purchases : 0,
       });
     }
     url = json.paging?.next || "";
   }
   return rows;
+}
+
+// ─── targeting + งบจริงระดับ adset ────────────────────────────────────
+// เดิมเดาจากชื่อแอด (budgetFromName / classifyFunnel) — ชื่อโกหกได้ ตัวนี้โกหกไม่ได้
+// เป็น snapshot "สถานะตอนนี้" ไม่ใช่รายวัน (Meta ไม่เก็บ targeting ย้อนหลัง)
+const num = (v: any): number | null => {
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : null;
+};
+
+function distillTargeting(t: any): Partial<AdsetInfo> {
+  if (!t || typeof t !== "object") return { interests: 0, customAudiences: 0, excludedAudiences: 0, lookalikes: 0, isBroad: false };
+  const flex: any[] = Array.isArray(t.flexible_spec) ? t.flexible_spec : [];
+  const countIn = (o: any, k: string) => (Array.isArray(o?.[k]) ? o[k].length : 0);
+  const interests =
+    countIn(t, "interests") + countIn(t, "behaviors") +
+    flex.reduce((s, f) => s + countIn(f, "interests") + countIn(f, "behaviors"), 0);
+  const inc: any[] = Array.isArray(t.custom_audiences) ? t.custom_audiences : [];
+  const exc: any[] = Array.isArray(t.excluded_custom_audiences) ? t.excluded_custom_audiences : [];
+  // LAL มาในรูป custom_audience ที่ชื่อขึ้นต้นด้วย Lookalike — นับแยกไว้ให้เห็นว่าเป็นการขยาย ไม่ใช่รีทาเก็ต
+  const lookalikes = inc.filter((a) => /lookalike|lal/i.test(a?.name || "")).length;
+  const geo = t.geo_locations || {};
+  const countries: string[] = Array.isArray(geo.countries) ? geo.countries : [];
+  const regions = countIn(geo, "regions") + countIn(geo, "cities");
+  return {
+    ageMin: num(t.age_min) ?? undefined,
+    ageMax: num(t.age_max) ?? undefined,
+    genders: !Array.isArray(t.genders) || t.genders.length === 0 || t.genders.length === 2
+      ? "all" : t.genders[0] === 1 ? "male" : "female",
+    countries: countries.length ? countries.join(",") : regions ? `พื้นที่ย่อย ${regions} จุด` : undefined,
+    interests,
+    customAudiences: inc.length,
+    excludedAudiences: exc.length,
+    lookalikes,
+    platforms: Array.isArray(t.publisher_platforms) ? t.publisher_platforms.join(",") : undefined,
+    // "ปล่อยกว้าง" = ไม่ล็อกความสนใจ และไม่ยิงเข้าฐานลูกค้าเดิม (exclude ไม่นับ — กันซ้ำเฉย ๆ)
+    isBroad: interests === 0 && inc.length === 0,
+  };
+}
+
+async function fetchAccountAdsets(
+  token: string,
+  accountId: string
+): Promise<AdsetInfo[]> {
+  const out: AdsetInfo[] = [];
+  // เอาเฉพาะตัวที่ยังไม่ถูกลบ — archived/deleted ไม่มีประโยชน์กับการตัดสินใจวันนี้
+  const statuses = encodeURIComponent(JSON.stringify(["ACTIVE", "PAUSED", "CAMPAIGN_PAUSED", "IN_PROCESS", "WITH_ISSUES", "PENDING_REVIEW"]));
+  let url =
+    `${GRAPH}/act_${accountId}/adsets` +
+    `?fields=id,name,daily_budget,lifetime_budget,created_time,effective_status,targeting,` +
+    `campaign{id,name}&effective_status=${statuses}&limit=200&access_token=${token}`;
+  while (url) {
+    const json = await gget(url);
+    for (const a of json.data || []) {
+      // Meta คืนงบเป็น "หน่วยย่อย" (สตางค์) — ต้องหาร 100 ไม่งั้นงบพองร้อยเท่า
+      const daily = num(a.daily_budget);
+      const life = num(a.lifetime_budget);
+      out.push({
+        platform: "meta",
+        accountId,
+        adsetId: a.id,
+        adsetName: a.name || a.id,
+        campaignId: a.campaign?.id,
+        campaignName: a.campaign?.name,
+        dailyBudget: daily !== null && daily > 0 ? daily / 100 : null,
+        lifetimeBudget: life !== null && life > 0 ? life / 100 : null,
+        createdTime: a.created_time,
+        effectiveStatus: a.effective_status,
+        interests: 0, customAudiences: 0, excludedAudiences: 0, lookalikes: 0, isBroad: false,
+        ...distillTargeting(a.targeting),
+      });
+    }
+    url = json.paging?.next || "";
+  }
+  return out;
 }
 
 export async function fetchMetaAds(args: FetchArgs): Promise<MetaResult> {
@@ -191,5 +283,21 @@ export async function fetchMetaAds(args: FetchArgs): Promise<MetaResult> {
       });
   });
 
-  return { rows, issues };
+  // targeting/งบ — เป็นของแถม ล้มได้โดยไม่ทำให้ตัวเลขหลักพัง
+  const adsets: AdsetInfo[] = [];
+  if (args.withAdsets) {
+    const got = await Promise.allSettled(accounts.map((a) => fetchAccountAdsets(token, a.id)));
+    got.forEach((r, i) => {
+      if (r.status === "fulfilled") adsets.push(...r.value);
+      else
+        issues.push({
+          id: accounts[i].id,
+          name: accounts[i].name,
+          status: "ADSET_FETCH_ERROR",
+          reason: String(r.reason).slice(0, 200),
+        });
+    });
+  }
+
+  return { rows, issues, adsets };
 }

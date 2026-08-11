@@ -37,7 +37,7 @@ if (!existsSync(entry)) {
 }
 const ae = createRequire(import.meta.url)(entry);
 const {
-  buildAdViews, callFor, classifyFunnel, suggestName, budgetFromName,
+  buildAdViews, callFor, classifyFunnel, suggestName, budgetFromName, adLabel,
   scaleVerdict, boardSignal, cannibalCheck, cloneFamilies, funnelBreakdown, namingGaps,
 } = ae;
 
@@ -46,14 +46,15 @@ const UNTIL = "2026-08-09";
 const day = (n) => new Date(Date.UTC(2026, 7, 9) + n * 86400000).toISOString().slice(0, 10);
 // day(0)=วันสุดท้าย · day(-1),(−2) = อยู่ในช่วง "3 วันล่าสุด" · day(-3)..(-6) = ช่วงก่อนหน้า
 
-/** สร้างแถวรายวันของแอด 1 ตัว · perDay = {d: [spend, revenue, results, replies, purchases]} */
+/** สร้างแถวรายวันของแอด 1 ตัว · perDay = {d: [spend, revenue, results, replies, purchases]}
+ *  opts.adId = ad_id จริงจาก Meta · ไม่ใส่ = จำลองข้อมูลเก่าก่อน migration 0003 */
 function ad(name, perDay, opts = {}) {
   const rows = [];
   for (const [d, v] of Object.entries(perDay)) {
     const [spend, revenue, results = 10, replies = 5, purchases = 0] = v;
     rows.push({
       platform: "meta", accountId: opts.acct || "1", accountName: opts.acctName || "ACC",
-      adName: name, spend, revenue, results, replies, purchases,
+      adId: opts.adId, adName: name, spend, revenue, results, replies, purchases,
       impressions: opts.impressions ?? Math.round(spend * 20),
       reach: opts.reach ?? Math.round(spend * 12),
       date: day(Number(d)),
@@ -268,6 +269,103 @@ console.log("\n━━━ 10) ผลรวมต้องไม่หายไป
   const gaps = namingGaps(views);
   check("นับแอดที่ชื่อไม่ครบถูกตัว (GRD ตัวเดียว)", gaps.rows.length, 1);
   check("  งบของแอดนั้นถูกต้อง", Math.round(gaps.spend), 2100);
+}
+
+console.log("\n━━━ 11) ⭐ ชื่อแอดซ้ำกันต้องไม่ถูกยุบเป็นตัวเดียว (บั๊กราก 11 ส.ค. 69) ━━━");
+{
+  // เคสจริง: P-FLOW 2 ยิง 1:1:3 ตั้งชื่อทุกตัวในชุดเหมือนกันเป๊ะ
+  // AI/Ultra/600/7Aug มี 4 ad ID — ตัวเดียวแบกทั้งชุด ที่เหลือยอด ๐
+  const NAME = "AI/Ultra/600/7Aug";
+  const D = [-6, -5, -4, -3, -2, -1, 0];
+  const per = (spend, rev, pur) => spread(D, [spend / 7, rev / 7, 10, 5, pur]);
+  const rows = [
+    ...ad(NAME, per(429.66, 6080, 1), { adId: "120247438208910686" }),
+    ...ad(NAME, per(148.14, 0, 0), { adId: "120247438208890686" }),
+    ...ad(NAME, per(138.88, 0, 0), { adId: "120247499809670686" }),
+    ...ad(NAME, per(138.19, 0, 0), { adId: "120247499809680686" }),
+  ];
+  const views = buildAdViews(rows, UNTIL);
+  check("4 ad_id ชื่อเดียวกัน → ได้ 4 แถว ไม่ใช่ 1", views.length, 4);
+
+  const winner = views.find((v) => v.adId === "120247438208910686");
+  check("  ตัวชนะ ROAS 14.15 ไม่ถูกเฉลี่ยจนเหลือ 6.49", Math.round(winner.all.roas * 100) / 100, 14.15);
+  check("  ค่าแอดตัวชนะแยกออกมาถูกต้อง", Math.round(winner.all.spend * 100) / 100, 429.66);
+  check("  รู้ว่าชื่อนี้ซ้ำกัน 4 ตัว", winner.nameDupes, 4);
+  check("  ตัวชนะขึ้นอันดับ 1 ของกลุ่มชื่อซ้ำ (ค่าแอดสูงสุด)", winner.dupeRank, 1);
+  check("  ป้ายที่โชว์ต่อท้ายด้วย ad_id 6 ตัว", adLabel(winner), `${NAME}  …910686`);
+
+  // ผลรวมต้องไม่หายไปไหน — แยกแถวแล้วเงินต้องเท่าเดิม
+  const sum = views.reduce((s, v) => s + v.all.spend, 0);
+  check("  ผลรวมค่าแอดยังเท่าเดิม (ไม่มีอะไรหาย)", Math.round(sum * 100) / 100, 854.87);
+
+  // ข้อมูลเก่าที่ยังไม่มี ad_id → ยังยุบรวมอยู่ (ตั้งใจ) แต่ต้องไม่พัง
+  const old = [
+    ...ad(NAME, per(429.66, 6080, 1)),
+    ...ad(NAME, per(148.14, 0, 0)),
+    ...ad(NAME, per(138.88, 0, 0)),
+    ...ad(NAME, per(138.19, 0, 0)),
+  ];
+  const oldViews = buildAdViews(old, UNTIL);
+  check("ไม่มี ad_id (ข้อมูลเก่า) → ยังรวมเป็น 1 แถว", oldViews.length, 1);
+  // ยุบรวมแล้ว ROAS ตัวชนะ 14.15 ถูกเฉลี่ยกับพี่น้องยอด ๐ เหลือ 7.11 = อาการเดียวกับที่ user จับได้
+  check("  ยุบรวมแล้วตัวชนะถูกกลบ (7.11 ไม่ใช่ 14.15)", Math.round(oldViews[0].all.roas * 100) / 100, 7.11);
+  check("  ป้ายไม่ต่อท้ายอะไรเมื่อไม่ซ้ำ", adLabel(oldViews[0]), NAME);
+}
+
+console.log("\n━━━ 12) ⭐ บันไดออเดอร์ต้องนับเฉพาะออเดอร์ที่มีมูลค่าจริง ━━━");
+{
+  // Meta นับ onsite_conversion.purchase เป็น "ซื้อ" แม้มูลค่า ๐
+  // วัดจริง 3 ส.ค. 69 (P-FLOW 2): 35 จาก 61 ซื้อ = 57% ไม่มีมูลค่าเลย
+  // แอดหนึ่งใช้ ฿6.41 นับ 11 ซื้อ มูลค่า ๐ — ถ้านับเลขดิบ บันไดนี้จะเปิดไฟเขียวให้สเกล
+  const rows = [
+    ...ad("AI/AW/600/1Aug", spread([-6, -5, -4, -3, -2, -1], [100, 0, 10, 5, 5])), // 30 ซื้อผี
+    ...ad("AI/AW/600/1Aug", { 0: [100, 3500, 10, 5, 2] }),                          // 2 ซื้อจริง
+  ];
+  const views = buildAdViews(rows, UNTIL);
+  const v = views[0];
+  check("Meta นับรวม 32 ซื้อ", v.all.purchases, 32);
+  check("  แต่มีมูลค่าจริงแค่ 2", v.all.purchasesValued, 2);
+  check("  ROAS ยังคิดถูก (3500/700)", Math.round(v.all.roas * 100) / 100, 5);
+
+  const c = callFor(v, { peerHasRevenue: true, avgFreq: 1.2, windowStart: day(-6), windowEnd: UNTIL });
+  check("ROAS 5 แต่ออเดอร์จริง 2 → ห้ามสเกล", c.action, "KEEP");
+  check("  บอกด้วยว่า Meta นับกี่ตัวและผีกี่ตัว", c.why.includes("มูลค่า ๐"), true);
+}
+
+console.log("\n━━━ 13) ตารางชื่อไม่ครบต้องรวมเป็นบรรทัดเดียวต่อชื่อ ━━━");
+{
+  // หลังแยกราย ad_id แล้ว ถ้าไม่รวม จะเสนอชื่อใหม่ซ้ำกัน 3 บรรทัดติด = อ่านไม่รู้เรื่อง
+  const NAME = "GRD/600/1Aug"; // ชื่อไม่บอกกลุ่มเป้าหมาย → เข้าตารางนี้
+  const D = [-6, -5, -4, -3, -2, -1, 0];
+  const rows = [
+    ...ad(NAME, spread(D, [100, 300, 10, 5, 1]), { adId: "aaa111" }),
+    ...ad(NAME, spread(D, [100, 300, 10, 5, 1]), { adId: "bbb222" }),
+    ...ad(NAME, spread(D, [100, 300, 10, 5, 1]), { adId: "ccc333" }),
+  ];
+  const views = buildAdViews(rows, UNTIL);
+  check("แยกเป็น 3 แอดจริง", views.length, 3);
+  const gaps = namingGaps(views);
+  check("แต่ตารางชื่อโชว์บรรทัดเดียว", gaps.rows.length, 1);
+  check("  บอกว่ามี 3 ตัวที่ต้องไปเปลี่ยนชื่อ", gaps.rows[0].ads, 3);
+  check("  งบเป็นผลรวมของทั้ง 3 ตัว", Math.round(gaps.rows[0].spend), 2100);
+}
+
+console.log("\n━━━ 14) clone ต้องจับคู่กับ 'ตัวแม่ที่เกิดก่อน' ไม่ใช่ตัวที่เจอทีหลัง ━━━");
+{
+  const PARENT = "AI/AW/600/1Aug";
+  const rows = [
+    // ตัวแม่จริง — เริ่มยิงตั้งแต่วันแรกของช่วง ต้นทุนต่อคนตอบถูก
+    ...ad(PARENT, spread([-6, -5, -4, -3, -2, -1, 0], [100, 500, 20, 10, 1]), { adId: "parent-old" }),
+    // ชื่อเดียวกันแต่เพิ่งเกิด + ต้นทุนแพงกว่ามาก (ถ้าจับคู่ผิดตัว คำตัดสิน clone จะกลับด้าน)
+    ...ad(PARENT, spread([-1, 0], [100, 0, 20, 2, 0]), { adId: "parent-new" }),
+    // clone ที่แพงกว่าตัวแม่จริง 5 เท่า → ต้องสั่ง kill
+    ...ad(`${PARENT} Clone 2026-08-08 1305`, spread([-2, -1, 0], [200, 0, 20, 2, 0]), { adId: "clone-1" }),
+  ];
+  const views = buildAdViews(rows, UNTIL);
+  const cc = ae.cloneChecks(views);
+  check("จับ clone ได้ 1 ตัว", cc.length, 1);
+  check("  ตัวแม่ที่จับคู่คือตัวที่เกิดก่อน", cc[0].parent.adId, "parent-old");
+  check("  clone แพงกว่าตัวแม่ → สั่งปิด", cc[0].verdict, "kill");
 }
 
 rmSync(out, { recursive: true, force: true });

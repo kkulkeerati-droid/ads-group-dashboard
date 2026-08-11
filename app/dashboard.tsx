@@ -13,6 +13,15 @@ const PLATFORMS = [
 
 const PRODUCT_COLORS = ["#6366f1", "#ec4899", "#14b8a6", "#f59e0b", "#8b5cf6", "#22c55e", "#64748b"];
 
+/** ชื่อที่โชว์ในตาราง — ทีมยิง 1:1:3 ตั้งชื่อแอดในชุดเหมือนกันเป๊ะ
+ *  พอ dashboard แยกราย ad_id แล้ว user จะเห็นชื่อเดียวกันหลายบรรทัด
+ *  ต่อท้ายด้วย ad_id 6 ตัวสุดท้าย เพราะเอาไปค้นใน Ads Manager ได้จริง */
+function adDisplay(a: { adName?: string; adId?: string; nameDupes?: number }): string {
+  const name = a.adName || "(ไม่มีชื่อ)";
+  if (!a.nameDupes || a.nameDupes <= 1) return name;
+  return a.adId ? `${name}  …${a.adId.slice(-6)}` : name;
+}
+
 const PRESETS = [
   { key: "today", label: "วันนี้" },
   { key: "yesterday", label: "เมื่อวาน" },
@@ -426,6 +435,8 @@ export default function Dashboard() {
         </div>
       )}
       {data?.warnings?.map((w, i) => <div className="warn" key={i}>⚠️ {w}</div>)}
+      {/* สุขภาพข้อมูล — บอกก่อนว่าเลขไหนยังเชื่อไม่ได้ ดีกว่าให้ไปเจอตอนตัดสินใจไปแล้ว */}
+      {data?.quality?.notes?.map((n, i) => <div className="warn issue" key={"q" + i}>🧪 {n}</div>)}
       {err && <div className="warn">❌ {err}</div>}
 
       {loading && !data ? (
@@ -452,8 +463,8 @@ export default function Dashboard() {
               .slice(0, 2);
             if (!close.length && !scale.length && !fix.length) return null;
             const pill = (r: (typeof recs)[0], key: string) => (
-              <span className={"reco pill " + r.dec!.cls} key={key} title={`${r.a.adName} · ${r.a.accountName}\n${r.dec!.why}`}>
-                {r.dec!.label} <b>{r.a.adName || "(ไม่มีชื่อ)"}</b> <em className="reco-acct">@{r.a.accountName}</em>{" "}
+              <span className={"reco pill " + r.dec!.cls} key={key} title={`${r.a.adName}${r.a.adId ? ` · ad_id ${r.a.adId}` : ""} · ${r.a.accountName}\n${r.dec!.why}`}>
+                {r.dec!.label} <b>{adDisplay(r.a)}</b> <em className="reco-acct">@{r.a.accountName}</em>{" "}
                 <small>{r.dec!.why}</small>
               </span>
             );
@@ -673,7 +684,7 @@ export default function Dashboard() {
                           <span className="acct-tag good">🟢 ไปต่อ</span>
                           {ac.go.slice(0, 4).map((r, i) => (
                             <div className="acct-ad" key={"g" + i} title={r.dec!.why}>
-                              <span className="name-cell">{r.a.adName || "(ไม่มีชื่อ)"}</span>
+                              <span className="name-cell">{adDisplay(r.a)}</span>
                               <span className="good">ROAS {r.a.roas.toFixed(2)}</span>
                               <small className="hint">฿{nInt(r.a.spend)} → ฿{nInt(r.a.revenue)} · ตอบจริง {r.a.replies}</small>
                             </div>
@@ -685,7 +696,7 @@ export default function Dashboard() {
                           <span className="acct-tag bad">🔴 พอแค่นี้</span>
                           {ac.stop.slice(0, 4).map((r, i) => (
                             <div className="acct-ad" key={"b" + i} title={r.dec!.why}>
-                              <span className="name-cell">{r.a.adName || "(ไม่มีชื่อ)"}</span>
+                              <span className="name-cell">{adDisplay(r.a)}</span>
                               <span className={r.dec!.cls}>{r.dec!.cls === "fix" ? "⚫ ไม่รู้ยอด" : r.a.revenue > 0 ? `${r.dec!.cls === "poor" ? "🟠 " : ""}ROAS ${r.a.roas.toFixed(2)}` : "ขาย ๐"}</span>
                               <small className="hint">฿{nInt(r.a.spend)} → ฿{nInt(r.a.revenue)} · ตอบจริง {r.a.replies}</small>
                             </div>
@@ -736,7 +747,9 @@ export default function Dashboard() {
                     const dec = decide(a, scope, g?.target);
                     return (
                       <tr key={i}>
-                        <td className="name-cell" title={a.adName}>{a.adName || "(ไม่มีชื่อ)"}</td>
+                        <td className="name-cell" title={a.nameDupes && a.nameDupes > 1 ? `${a.adName}\nad_id ${a.adId || "–"}\n⚠️ บัญชีนี้มีแอดชื่อนี้ ${a.nameDupes} ตัว — บรรทัดนี้คือตัวเดียว ไม่ใช่ผลรวมทั้งชุด` : a.adName}>
+                          {adDisplay(a)}
+                        </td>
                         <td><span className="tag" style={{ background: g?.color }}>{g?.label}</span></td>
                         <td className="name-cell">{a.accountName}</td>
                         <td>฿{nMoney(a.spend)}</td>
@@ -1052,12 +1065,13 @@ function NamingPanel({ data }: { data: Metrics }) {
       <div className="tbl-scroll">
         <table>
           <thead>
-            <tr><th>ชื่อตอนนี้</th><th>บัญชี</th><th>สินค้า</th><th>งบ</th><th>ROAS</th><th style={{ minWidth: 240 }}>ชื่อที่ควรเปลี่ยนเป็น</th></tr>
+            <tr><th>ชื่อตอนนี้</th><th title="แอดชื่อนี้ในบัญชีนี้มีกี่ตัว — เปลี่ยนชื่อทีต้องแก้ครบทุกตัว">กี่ตัว</th><th>บัญชี</th><th>สินค้า</th><th>งบ</th><th>ROAS</th><th style={{ minWidth: 240 }}>ชื่อที่ควรเปลี่ยนเป็น</th></tr>
           </thead>
           <tbody>
             {rows.map((r) => (
               <tr key={r.accountName + r.adName}>
                 <td className="name-cell">{r.adName}</td>
+                <td>{r.ads > 1 ? <b title="ชื่อซ้ำกันหลายตัว — งบ/ROAS ช่องขวาคือผลรวมของทั้งกลุ่ม">×{r.ads}</b> : "1"}</td>
                 <td>{r.accountName}</td>
                 <td>{r.product}</td>
                 <td><strong>฿{nInt(r.spend)}</strong></td>

@@ -14,7 +14,8 @@ import {
   MIN_ACTIVE_DAYS, MIN_SPEND_TO_JUDGE, MIN_DAYS_TO_SCALE, ANT_KILL_BUDGET_SHARE,
 } from "./decide";
 import { parseProduct, parseTheme, parseAudience } from "./content";
-import type { AdRow } from "./types";
+import { adKey } from "./types";
+import type { AdRow, AdsetInfo } from "./types";
 
 // ─── 1) ชั้น funnel — ดูจาก "กลุ่มเป้าหมาย" ในชื่อ ไม่ใช่ objective ────
 // objective (ยอดขาย/Buy/msg/conv) บอกว่าตั้งให้ Meta หาอะไร
@@ -180,11 +181,14 @@ export function budgetBumps(adName: string): number {
 // ─── 3) สรุปราย ad จาก row รายวัน + เทียบ 3 วันล่าสุด vs 4 วันก่อน ────
 export interface Slice {
   spend: number; revenue: number; results: number; replies: number; purchases: number;
+  /** ออเดอร์ที่มีมูลค่าติดมาด้วย — ตัวเดียวที่เอาไปนับบันไดออเดอร์ 10/20/30 ได้
+   *  purchases ดิบมี event มูลค่า ๐ ปนถึง 57% (วัดจริง 3 ส.ค. 69) = ไฟเขียวปลอมให้สเกล */
+  purchasesValued: number;
   impressions: number; reach: number;
   roas: number; cpReply: number; freq: number; days: number;
 }
 
-const emptySlice = (): Slice => ({ spend: 0, revenue: 0, results: 0, replies: 0, purchases: 0, impressions: 0, reach: 0, roas: 0, cpReply: 0, freq: 0, days: 0 });
+const emptySlice = (): Slice => ({ spend: 0, revenue: 0, results: 0, replies: 0, purchases: 0, purchasesValued: 0, impressions: 0, reach: 0, roas: 0, cpReply: 0, freq: 0, days: 0 });
 
 function seal(s: Slice, dayCount: number): Slice {
   s.roas = s.spend > 0 ? s.revenue / s.spend : 0;
@@ -195,7 +199,14 @@ function seal(s: Slice, dayCount: number): Slice {
 }
 
 export interface AdView {
+  /** ad_id จริงจาก Meta — undefined = ข้อมูลเก่าก่อน migration 0003 (ยังรวมชื่อซ้ำอยู่) */
+  adId?: string;
   adName: string; accountName: string; accountId: string;
+  /** ในบัญชีเดียวกันมีแอดชื่อนี้กี่ตัว (1 = ไม่ซ้ำ) */
+  nameDupes: number;
+  /** ลำดับที่เท่าไหร่ในกลุ่มชื่อซ้ำ เรียงตามค่าแอดมากไปน้อย (1-based) */
+  dupeRank: number;
+  adsetId?: string; adsetName?: string; campaignId?: string; campaignName?: string;
   product: string; theme: string; audience: string;
   funnel: Funnel; funnelWhy: string; funnelSure: boolean; objective: string;
   isClone: boolean; parent: string | null; bumps: number;
@@ -205,9 +216,18 @@ export interface AdView {
   firstSeen: string; lastSeen: string; activeDays: number;
 }
 
+/** ป้ายที่ใช้โชว์ในตาราง — ชื่อซ้ำต้องแยกออกจากกัน ไม่งั้น user เห็นชื่อเดียวกัน 4 บรรทัดแล้วงง
+ *  ใช้ท้าย ad_id 6 ตัว เพราะ user ก๊อปไปหาใน Ads Manager ได้จริง (ต่างจากเลข 1/4 ที่ไม่มีความหมาย) */
+export function adLabel(v: { adName: string; adId?: string; nameDupes: number; dupeRank: number }): string {
+  if (v.nameDupes <= 1) return v.adName;
+  const tail = v.adId ? `…${v.adId.slice(-6)}` : `#${v.dupeRank}`;
+  return `${v.adName}  ${tail}`;
+}
+
 function addRow(s: Slice, r: AdRow, dates: Set<string>) {
   s.spend += r.spend; s.revenue += r.revenue || 0; s.results += r.results;
   s.replies += r.replies || 0; s.purchases += r.purchases || 0;
+  s.purchasesValued += r.purchasesValued ?? ((r.revenue || 0) > 0 ? r.purchases || 0 : 0);
   s.impressions += r.impressions; s.reach += r.reach;
   if (r.date) dates.add(r.date);
 }
@@ -220,13 +240,19 @@ export function buildAdViews(rows: AdRow[], until: string, recentDays = 3, prior
 
   for (const r of rows) {
     if (!r.adName) continue;
-    const key = `${r.accountId}::${r.adName}`;
+    // ⭐ key ต้องเป็น ad_id — ทีมยิง 1:1:3 ตั้งชื่อทุกตัวในชุดเหมือนกัน
+    //    เคย key ด้วยชื่อ → 4 แอดยุบเป็นแถวเดียว ตัวชนะ ROAS 14.15 โดนเฉลี่ยเหลือ 6.49
+    //    ข้อมูลเก่าไม่มี ad_id จึงถอยไปใช้ชื่อ (ยังรวมอยู่ แต่ quality.rowsWithoutAdId จะฟ้อง)
+    const key = adKey(r);
     let v = map.get(key) as any;
     if (!v) {
       const f = classifyFunnel(r.adName);
       const c = cloneInfo(r.adName);
       v = {
-        adName: r.adName, accountName: r.accountName, accountId: r.accountId,
+        adId: r.adId, adName: r.adName, accountName: r.accountName, accountId: r.accountId,
+        nameDupes: 1, dupeRank: 1,
+        adsetId: r.adsetId, adsetName: r.adsetName,
+        campaignId: r.campaignId, campaignName: r.campaignName,
         product: parseProduct(r.adName), theme: parseTheme(r.adName), audience: parseAudience(r.adName),
         funnel: f.stage, funnelWhy: f.why, funnelSure: f.sure, objective: classifyObjective(r.adName),
         isClone: c.isClone, parent: c.parent, bumps: budgetBumps(r.adName),
@@ -237,6 +263,9 @@ export function buildAdViews(rows: AdRow[], until: string, recentDays = 3, prior
       };
       map.set(key, v);
     }
+    // adset/campaign อาจมาไม่ครบทุกแถว (แถวเก่า) — เติมให้เต็มจากแถวไหนก็ได้ที่มี
+    if (!v.adsetId && r.adsetId) { v.adsetId = r.adsetId; v.adsetName = r.adsetName; }
+    if (!v.campaignId && r.campaignId) { v.campaignId = r.campaignId; v.campaignName = r.campaignName; }
     addRow(v.all, r, v._d);
     if (r.date) {
       if (r.date < v.firstSeen || !v.firstSeen) v.firstSeen = r.date;
@@ -246,12 +275,63 @@ export function buildAdViews(rows: AdRow[], until: string, recentDays = 3, prior
     }
   }
 
-  return [...map.values()].map((v) => {
+  const views = [...map.values()].map((v) => {
     seal(v.all, v._d.size); seal(v.recent, v._rd.size); seal(v.prior, v._pd.size);
     v.activeDays = v._d.size;
     const { _d, _rd, _pd, ...rest } = v as any;
     return rest as AdView;
   });
+
+  // นับชื่อซ้ำ "ในบัญชีเดียวกัน" แล้วจัดอันดับตามค่าแอด — ใช้ทั้งตอนโชว์และตอนหาตัวแม่ของ clone
+  const byName = new Map<string, AdView[]>();
+  for (const v of views) {
+    const k = `${v.accountId}::${v.adName.trim()}`;
+    const list = byName.get(k);
+    if (list) list.push(v); else byName.set(k, [v]);
+  }
+  for (const list of byName.values()) {
+    list.sort((a, b) => b.all.spend - a.all.spend);
+    list.forEach((v, i) => { v.nameDupes = list.length; v.dupeRank = i + 1; });
+  }
+
+  return views;
+}
+
+/** เอา targeting + งบจริงจาก Meta มาทับการเดาจากชื่อแอด
+ *
+ *  ชื่อแอดเป็นสิ่งที่คนพิมพ์ — พิมพ์ผิด/ลืมเปลี่ยนตอน duplicate/ตั้งไม่ครบได้ตลอด
+ *  targeting กับงบมาจาก Meta โดยตรง โกหกไม่ได้ · ตัวไหนมีของจริงให้ใช้ของจริง
+ *
+ *  ⚠️ ที่ยัง "ไม่" ทำ: งบเป็นของ adset ไม่ใช่ของแอด — ยิง 1:1:3 คือ 3 แอดใช้งบก้อนเดียวกัน
+ *     ยังไม่หารเฉลี่ยเพราะกติกาแอดมดถูกจูนมากับงบเต็มก้อน (เทียบ spend รายแอด vs 30% ของงบ adset)
+ *     ถ้าจะหาร ต้องคุยกับ user ก่อน ไม่ใช่เปลี่ยนเงียบ ๆ */
+export function attachAdsets(views: AdView[], adsets: AdsetInfo[]): AdView[] {
+  if (!adsets.length) return views;
+  const byId = new Map(adsets.map((a) => [a.adsetId, a]));
+  for (const v of views) {
+    const s = v.adsetId ? byId.get(v.adsetId) : undefined;
+    if (!s) continue;
+
+    // งบจริงชนะงบที่เขียนไว้ในชื่อเสมอ (null = ใช้งบระดับแคมเปญ CBO → ถอยไปใช้ชื่อ)
+    if (s.dailyBudget && s.dailyBudget > 0) v.budget = s.dailyBudget;
+
+    // ── funnel จาก targeting จริง ──
+    if (s.isBroad) {
+      v.funnel = "TOF"; v.funnelSure = true;
+      v.funnelWhy = "targeting จริง: ไม่ล็อกความสนใจ ไม่มี custom audience = ปล่อยกว้าง";
+    } else if (s.lookalikes > 0 && s.customAudiences === s.lookalikes) {
+      // มีแต่ LAL = ยังหาคนใหม่อยู่ ไม่ใช่รีทาเก็ต
+      v.funnel = "TOF"; v.funnelSure = true;
+      v.funnelWhy = `targeting จริง: ใช้ Lookalike ${s.lookalikes} ชุด = หาคนใหม่`;
+    } else if (s.customAudiences > s.lookalikes && v.funnel === "?") {
+      // มี custom audience ที่ไม่ใช่ LAL = ยิงใส่คนที่รู้จักเราแล้ว
+      // แต่ API บอกไม่ได้ว่าเป็น MOF (อุ่น) หรือ BOF (ใกล้ซื้อ) — เดาเป็น MOF และยังไม่ถือว่าชัวร์
+      // เพื่อให้ยังโผล่ในตาราง "ชื่อไม่ครบ" ให้ทีมไปแก้ชื่อ
+      v.funnel = "MOF";
+      v.funnelWhy = `targeting จริง: ยิงใส่ custom audience ${s.customAudiences - s.lookalikes} ชุด (API แยก MOF/BOF ไม่ได้ — ชื่อยังต้องบอก)`;
+    }
+  }
+  return views;
 }
 
 function addDays(iso: string, n: number): string {
@@ -292,7 +372,8 @@ export const ORDERS_SCALE = 30;   // ถึงตรงนี้ค่อยด�
 /** ต้นทุนต่อออเดอร์นิ่งหรือยัง — นิ่ง 3 วันขึ้นไปถึงจะเพิ่มงบได้ (เงื่อนไขที่ 1 ของแม่เอ) */
 export function costIsStable(v: AdView): { stable: boolean; why: string } {
   const r = v.recent, p = v.prior;
-  const cprOf = (s: Slice) => (s.purchases > 0 ? s.spend / s.purchases : 0);
+  // ใช้ purchasesValued — purchases ดิบมีออเดอร์มูลค่า ๐ ปน ทำให้ต้นทุน/ออเดอร์ต่ำผิดจริง
+  const cprOf = (s: Slice) => (s.purchasesValued > 0 ? s.spend / s.purchasesValued : 0);
   const a = cprOf(p), b = cprOf(r);
   if (!a || !b) return { stable: false, why: "ยังไม่มีออเดอร์พอให้ดูว่าต้นทุนนิ่งไหม" };
   const drift = Math.abs(b - a) / a;
@@ -384,7 +465,8 @@ export function callFor(
   // ⚠️ ต้องไม่ทำงานเมื่อ "มีคนกลับมาคุยอยู่" — บทที่ 34 เองก็บอกว่าปิดแล้วให้แอดมินลากแชตต่อ
   //    ถ้ามีคนคุยอยู่จริง สิ่งที่ต้องแก้คือขั้นปิดการขาย (บทที่ 4) ไม่ใช่ฆ่าแอดที่กำลังส่งคนมาให้
   const antKill = v.budget ? v.budget * ANT_KILL_BUDGET_SHARE : 0;
-  if (antKill && a.purchases === 0 && a.replies === 0 && a.spend >= antKill && ctx.peerHasRevenue && v.activeDays >= 1) {
+  // purchasesValued — ออเดอร์มูลค่า ๐ ไม่ควรช่วยให้แอดที่ไม่ทำเงินรอดจากด่านนี้
+  if (antKill && a.purchasesValued === 0 && a.replies === 0 && a.spend >= antKill && ctx.peerHasRevenue && v.activeDays >= 1) {
     return { action: "STOP", money: a.spend,
       why: `งบในชื่อ ${M(v.budget!)}/วัน · ใช้ไป ${M(a.spend)} แล้วยังไม่มีออเดอร์สักรายการ`,
       how: `กติกาแอดมด: เกิน ${Math.round(ANT_KILL_BUDGET_SHARE * 100)}% ของงบวันแล้วยังไม่มีการซื้อ = ปิดก่อน · ให้แอดมินลากแชตกระตุ้นปิดการขาย ถ้ามียอดเข้าค่อยเปิดกลับ` };
@@ -472,10 +554,15 @@ export function callFor(
   // ── ผ่านเส้นสเกลแล้ว แต่ยังต้องผ่านบันไดออเดอร์ + บันไดวันก่อน ──
   // กติกาแม่เอ: "อย่าสเกลเพราะ ROAS สวย แต่เพิ่งขายได้ 2 ออเดอร์"
   // ROAS 5 จากออเดอร์เดียว = ความบังเอิญ ไม่ใช่หลักฐานว่าระบบหาคนซื้อซ้ำได้
-  const orders = a.purchases;
+  // ⚠️ ต้องเป็น purchasesValued ไม่ใช่ purchases
+  // Meta นับ onsite_conversion.purchase เป็น "ซื้อ" แม้มูลค่า ๐ — วัดจริง 3 ส.ค. 69 ปนถึง 57%
+  // แอดหนึ่งใช้ ฿6.41 นับ 11 ซื้อ มูลค่า ๐ · ถ้าใช้เลขดิบ บันไดนี้จะเปิดไฟเขียวให้สเกลทั้งที่ไม่มียอด
+  const orders = a.purchasesValued;
   if (orders < ORDERS_ANALYZE) {
+    const junk = a.purchases - orders;
     return { action: "KEEP", money: 0,
-      why: `ROAS ${roas.toFixed(2)} สวย แต่เพิ่งได้ ${orders} ออเดอร์ — ยังไม่ใช่หลักฐาน`,
+      why: `ROAS ${roas.toFixed(2)} สวย แต่เพิ่งได้ ${orders} ออเดอร์ที่มีมูลค่าจริง — ยังไม่ใช่หลักฐาน`
+        + (junk > 0 ? ` (Meta นับ ${a.purchases} แต่ ${junk} ตัวมูลค่า ๐)` : ""),
       how: `ปล่อยงบเท่าเดิมให้ถึง ${ORDERS_ANALYZE} ออเดอร์ก่อน แล้วค่อยดู · ROAS จากออเดอร์ไม่กี่รายการเหวี่ยงง่ายมาก` };
   }
 
@@ -532,12 +619,12 @@ export function callFor(
 export interface FunnelRow {
   stage: Funnel; label: string; spend: number; share: number;
   revenue: number; roas: number; ads: number;
-  results: number; replies: number; purchases: number;
+  results: number; replies: number; purchases: number; purchasesValued: number;
   /** ส่วนที่อ่านจาก "ค่าเริ่มต้น" ไม่ได้อ่านจากชื่อ — หลักฐานอ่อนกว่า */
   assumedSpend: number; assumedAds: number;
 }
 
-const emptyFunnelAcc = () => ({ spend: 0, revenue: 0, ads: 0, results: 0, replies: 0, purchases: 0, assumedSpend: 0, assumedAds: 0 });
+const emptyFunnelAcc = () => ({ spend: 0, revenue: 0, ads: 0, results: 0, replies: 0, purchases: 0, purchasesValued: 0, assumedSpend: 0, assumedAds: 0 });
 
 export function funnelBreakdown(views: AdView[]): { rows: FunnelRow[]; notes: string[] } {
   const acc = new Map<Funnel, ReturnType<typeof emptyFunnelAcc>>();
@@ -546,7 +633,8 @@ export function funnelBreakdown(views: AdView[]): { rows: FunnelRow[]; notes: st
   for (const v of views) {
     const a = acc.get(v.funnel)!;
     a.spend += v.all.spend; a.revenue += v.all.revenue; a.ads++;
-    a.results += v.all.results; a.replies += v.all.replies; a.purchases += v.all.purchases;
+    a.results += v.all.results; a.replies += v.all.replies;
+    a.purchases += v.all.purchases; a.purchasesValued += v.all.purchasesValued;
     if (!v.funnelSure) { a.assumedSpend += v.all.spend; a.assumedAds++; }
     total += v.all.spend;
   }
@@ -556,7 +644,7 @@ export function funnelBreakdown(views: AdView[]): { rows: FunnelRow[]; notes: st
       return {
         stage, label: FUNNEL_LABEL[stage], spend: a.spend, share: total ? a.spend / total : 0,
         revenue: a.revenue, roas: a.spend ? a.revenue / a.spend : 0, ads: a.ads,
-        results: a.results, replies: a.replies, purchases: a.purchases,
+        results: a.results, replies: a.replies, purchases: a.purchases, purchasesValued: a.purchasesValued,
         assumedSpend: a.assumedSpend, assumedAds: a.assumedAds,
       };
     })
@@ -589,21 +677,42 @@ export interface NamingGap {
   adName: string; accountName: string; product: string;
   spend: number; revenue: number; roas: number;
   suggested: string | null;
+  /** แอดชื่อนี้ในบัญชีนี้มีกี่ตัว — เปลี่ยนชื่อทีต้องแก้ครบทุกตัว */
+  ads: number;
 }
 
-/** เรียงตามงบมากไปน้อย — ทีมเห็นทันทีว่าแก้ตัวไหนก่อนได้ผลที่สุด */
+/** เรียงตามงบมากไปน้อย — ทีมเห็นทันทีว่าแก้ตัวไหนก่อนได้ผลที่สุด
+ *
+ *  ⚠️ ต้องรวมเป็น "1 บรรทัดต่อชื่อ" ไม่ใช่ต่อ ad_id — หลังแก้ ad_id แล้ว
+ *  แอดชื่อเดียวกัน 4 ตัวจะกลายเป็น 4 บรรทัดที่เสนอชื่อใหม่เหมือนกันเป๊ะ = อ่านไม่รู้เรื่อง
+ *  แต่ตัวเลขยังบวกมาจากรายตัว (spend/revenue ของทุกตัวในชื่อนั้น) */
 export function namingGaps(views: AdView[]): { rows: NamingGap[]; spend: number; share: number } {
   const total = views.reduce((s, v) => s + v.all.spend, 0);
-  const rows = views
-    .filter((v) => !v.funnelSure && v.all.spend > 0)
-    .sort((a, b) => b.all.spend - a.all.spend)
-    .map((v) => ({
-      adName: v.adName, accountName: v.accountName, product: v.product,
-      spend: Math.round(v.all.spend * 100) / 100,
-      revenue: Math.round(v.all.revenue * 100) / 100,
-      roas: v.all.spend ? Math.round((v.all.revenue / v.all.spend) * 100) / 100 : 0,
-      suggested: suggestName(v.adName),
-    }));
+  const byName = new Map<string, NamingGap>();
+  for (const v of views) {
+    if (v.funnelSure || v.all.spend <= 0) continue;
+    const k = `${v.accountId}::${v.adName}`;
+    const cur = byName.get(k);
+    if (cur) {
+      cur.spend += v.all.spend;
+      cur.revenue += v.all.revenue;
+      cur.ads += 1;
+    } else {
+      byName.set(k, {
+        adName: v.adName, accountName: v.accountName, product: v.product,
+        spend: v.all.spend, revenue: v.all.revenue, roas: 0,
+        suggested: suggestName(v.adName), ads: 1,
+      });
+    }
+  }
+  const rows = [...byName.values()]
+    .map((r) => ({
+      ...r,
+      spend: Math.round(r.spend * 100) / 100,
+      revenue: Math.round(r.revenue * 100) / 100,
+      roas: r.spend ? Math.round((r.revenue / r.spend) * 100) / 100 : 0,
+    }))
+    .sort((a, b) => b.spend - a.spend);
   const spend = rows.reduce((s, r) => s + r.spend, 0);
   return { rows, spend: Math.round(spend * 100) / 100, share: total ? spend / total : 0 };
 }
@@ -627,7 +736,8 @@ export function funnelByProduct(views: AdView[]): FunnelByProductRow[] {
   for (const [product, list] of byProd) {
     const spend = list.reduce((s, v) => s + v.all.spend, 0);
     const revenue = list.reduce((s, v) => s + v.all.revenue, 0);
-    const purchases = list.reduce((s, v) => s + v.all.purchases, 0);
+    // นับเฉพาะออเดอร์ที่มีมูลค่าจริง — เกณฑ์ "ซื้อครบ 20 ราย ค่อยทำ LAL" ต้องนับคนซื้อจริง
+    const purchases = list.reduce((s, v) => s + v.all.purchasesValued, 0);
     const cells = {} as FunnelByProductRow["cells"];
     for (const st of ["TOF", "MOF", "BOF", "?"] as Funnel[]) {
       const g = list.filter((v) => v.funnel === st);
@@ -720,7 +830,8 @@ export function audienceTodos(views: AdView[]): string[] {
   for (const [product, list] of byProd) {
     const spend = list.reduce((s, v) => s + v.all.spend, 0);
     if (spend < 1000) continue;
-    const purchases = list.reduce((s, v) => s + v.all.purchases, 0);
+    // นับเฉพาะออเดอร์ที่มีมูลค่าจริง — เกณฑ์ "ซื้อครบ 20 ราย ค่อยทำ LAL" ต้องนับคนซื้อจริง
+    const purchases = list.reduce((s, v) => s + v.all.purchasesValued, 0);
     const replies = list.reduce((s, v) => s + v.all.replies, 0);
     const hasLAL = list.some((v) => /LAL/i.test(v.adName));
     const hasRE = list.some((v) => v.funnel === "MOF" || v.funnel === "BOF");
@@ -742,8 +853,21 @@ export interface CloneCheck { clone: AdView; parent: AdView; verdict: "kill" | "
 export function cloneChecks(views: AdView[]): CloneCheck[] {
   // key ด้วย accountId ด้วย — ชื่อแอดซ้ำกันข้ามบัญชีมีจริง (ทีมใช้ชื่อชุดเดียวกันหลายบัญชี)
   // ถ้า key ด้วยชื่อเปล่า clone ในบัญชี A จะไปจับคู่กับตัวแม่ในบัญชี B แล้วเทียบต้นทุนผิดคู่
+  //
+  // ⚠️ หลังแก้ ad_id: ชื่อเดียวกันมีได้หลายตัว (1:1:3) → Map เดิมเก็บได้ตัวเดียว
+  //    ตัวไหนมาทีหลังทับตัวก่อน = จับคู่ตัวแม่แบบสุ่มตามลำดับที่วนเจอ
+  //    "ตัวแม่" ที่ถูกต้องคือตัวที่ "เกิดก่อน" (clone ถูกสร้างทีหลังเสมอตามนิยาม)
+  //    เท่ากัน → เอาตัวที่ใช้เงินมากสุด (ตัวหลักของชุด)
   const byName = new Map<string, AdView>();
-  for (const v of views) byName.set(`${v.accountId}::${v.adName.trim()}`, v);
+  for (const v of views) {
+    const k = `${v.accountId}::${v.adName.trim()}`;
+    const cur = byName.get(k);
+    if (!cur) { byName.set(k, v); continue; }
+    const older = v.firstSeen && cur.firstSeen && v.firstSeen !== cur.firstSeen
+      ? (v.firstSeen < cur.firstSeen ? v : cur)
+      : (v.all.spend > cur.all.spend ? v : cur);
+    byName.set(k, older);
+  }
   const out: CloneCheck[] = [];
   for (const v of views) {
     if (!v.isClone || !v.parent) continue;

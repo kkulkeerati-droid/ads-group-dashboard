@@ -1,9 +1,11 @@
 import { buildClassifier, type GroupDef } from "./groups";
 import { parseAudience, parseTheme, parseProduct } from "./content";
 import {
-  buildAdViews, classifyFunnel, funnelBreakdown, funnelByProduct, namingGaps,
+  buildAdViews, attachAdsets, classifyFunnel, funnelBreakdown, funnelByProduct, namingGaps,
   FUNNEL_LABEL, type Funnel,
 } from "./ae";
+import type { AdsetInfo } from "./types";
+import { adKey } from "./types";
 import type { ContentDim, FunnelTotal, FunnelProductRow, NamingGapRow } from "./types";
 import type {
   AdRow,
@@ -48,14 +50,17 @@ interface Acc {
   results: number;
   replies: number;
   purchases: number;
+  purchasesValued: number;
   revenue: number;
 }
-const zero = (): Acc => ({ spend: 0, impressions: 0, reach: 0, results: 0, replies: 0, purchases: 0, revenue: 0 });
+const zero = (): Acc => ({ spend: 0, impressions: 0, reach: 0, results: 0, replies: 0, purchases: 0, purchasesValued: 0, revenue: 0 });
 
 // บวก metric คุณภาพเข้า accumulator (ที่เดียว — เรียกทุกจุดที่บวก spend)
 function addQ(a: Acc, r: AdRow) {
   a.replies += r.replies || 0;
   a.purchases += r.purchases || 0;
+  // แถวเก่าไม่มีคอลัมน์นี้ → คิดย้อนแบบเดียวกับ meta.ts (มีมูลค่า = นับ, ไม่มี = ไม่นับ)
+  a.purchasesValued += r.purchasesValued ?? ((r.revenue || 0) > 0 ? r.purchases || 0 : 0);
   a.revenue += r.revenue || 0;
 }
 
@@ -78,6 +83,8 @@ export function aggregate(
     warnings?: string[];
     accountIssues?: AccountIssue[];
     demoSeries?: SeriesPoint[];
+    /** targeting/งบจริงระดับ adset — มีเมื่อไหร่ใช้ทับการเดาจากชื่อแอด */
+    adsets?: AdsetInfo[];
   }
 ): Metrics {
   const { classify, groups: groupDefs } = buildClassifier(opts.groupsConfig);
@@ -110,7 +117,8 @@ export function aggregate(
     ga.impressions += r.impressions;
     ga.reach += r.reach;
     ga.results += r.results;
-    groupAds.get(key)!.add(`${r.accountId}::${r.adName}`);
+    // นับจำนวนแอดด้วย ad_id — เคยนับด้วยชื่อ ทำให้ 4 แอดชื่อเดียวกันนับเป็น 1
+    groupAds.get(key)!.add(adKey(r));
     if (r.resultType) {
       const rt = groupResultType.get(key)!;
       rt.set(r.resultType, (rt.get(r.resultType) || 0) + r.results);
@@ -136,7 +144,8 @@ export function aggregate(
         results: 0,
         cpm: 0,
         cpr: 0,
-        replies: 0, replyRate: 0, cpReply: 0, purchases: 0, revenue: 0, roas: 0, convRate: 0, basket: 0,
+        replies: 0, replyRate: 0, cpReply: 0, purchases: 0, purchasesValued: 0,
+        zeroValuePurchases: 0, revenue: 0, roas: 0, convRate: 0, basket: 0,
       };
       accounts.set(accKey, acc);
     }
@@ -158,11 +167,14 @@ export function aggregate(
       pt.byFunnel[st] = (pt.byFunnel[st] || 0) + r.spend;
     }
 
-    // top ads
-    const adKey = `${accKey}::${r.adName}`;
-    let ad = adMap.get(adKey);
+    // top ads — ⭐ key ต้องเป็น ad_id ไม่ใช่ชื่อ
+    // ทีมยิง 1:1:3 ตั้งชื่อทุกตัวในชุดเหมือนกัน · เคย key ด้วยชื่อ → ตัวชนะถูกเฉลี่ยจนหาย
+    // (AI/Ultra/600/7Aug ตัวจริง ROAS 14.15 โดนรวมกับพี่น้องยอด ๐ เหลือ 6.49 แล้วตกด่านสเกล)
+    const aKey = `${r.platform}:${adKey(r)}`;
+    let ad = adMap.get(aKey);
     if (!ad) {
       ad = {
+        adId: r.adId,
         adName: r.adName,
         group: key,
         accountName: r.accountName,
@@ -174,13 +186,14 @@ export function aggregate(
         results: 0,
         cpm: 0,
         cpr: 0,
-        replies: 0, replyRate: 0, cpReply: 0, purchases: 0, revenue: 0, roas: 0, convRate: 0, basket: 0,
+        replies: 0, replyRate: 0, cpReply: 0, purchases: 0, purchasesValued: 0,
+        zeroValuePurchases: 0, revenue: 0, roas: 0, convRate: 0, basket: 0,
       };
-      adMap.set(adKey, ad);
+      adMap.set(aKey, ad);
     }
     if (r.date) {
-      let ds = adDays.get(adKey);
-      if (!ds) { ds = new Set(); adDays.set(adKey, ds); }
+      let ds = adDays.get(aKey);
+      if (!ds) { ds = new Set(); adDays.set(aKey, ds); }
       ds.add(r.date);
     }
     ad._acc.spend += r.spend; addQ(ad._acc, r);
@@ -215,10 +228,21 @@ export function aggregate(
     .map((a) => finalizeMetric(a, a._acc))
     .sort((x, y) => y.spend - x.spend);
 
+  // ชื่อซ้ำกันในบัญชีเดียวมีกี่ตัว — ต้องนับจาก adMap "ทั้งหมด" ก่อน slice(25)
+  // ไม่งั้นตัวที่ 26 ขึ้นไปหลุดออกแล้วเหลือชื่อซ้ำแค่ 1 ตัวใน top 25 = ไม่ติดป้ายกำกับ user งงว่าทำไมเลขไม่ตรง
+  const dupeCount = new Map<string, number>();
+  for (const a of adMap.values()) {
+    const k = `${a.platform}:${a.accountName}::${a.adName}`;
+    dupeCount.set(k, (dupeCount.get(k) || 0) + 1);
+  }
   const topAds: TopAd[] = [...adMap.entries()]
     .sort((x, y) => y[1]._acc.spend - x[1]._acc.spend)
     .slice(0, 25)
-    .map(([k, a]) => ({ ...finalizeMetric(a, a._acc), activeDays: adDays.get(k)?.size ?? 0 }));
+    .map(([k, a]) => ({
+      ...finalizeMetric(a, a._acc),
+      activeDays: adDays.get(k)?.size ?? 0,
+      nameDupes: dupeCount.get(`${a.platform}:${a.accountName}::${a.adName}`) || 1,
+    }));
 
   let series: SeriesPoint[] = [...seriesMap.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
@@ -245,7 +269,8 @@ export function aggregate(
       if (!a) { a = { ...zero(), names: new Set() }; map.set(key, a); }
       a.spend += r.spend; a.impressions += r.impressions; addQ(a, r);
       a.reach += r.reach; a.results += r.results;
-      a.names.add(r.adName);
+      // นับ "จำนวนแอด" ต่อมิติด้วย ad_id — ชื่อซ้ำ 4 ตัวเคยนับเป็น 1
+      a.names.add(adKey(r));
     }
   }
   const toDims = (m: Map<string, Acc & { names: Set<string> }>): ContentDim[] =>
@@ -256,7 +281,7 @@ export function aggregate(
   const content = { themes: toDims(themeAcc), audiences: toDims(audAcc), products: toDims(prodAcc), funnels: toDims(funnelAcc) };
 
   // ── funnel: ใช้เครื่องเดียวกับหน้า /brief เพื่อให้ตัวเลข 2 หน้าตรงกันเสมอ ──
-  const views = buildAdViews(rows, opts.until).filter((v) => v.all.spend > 0);
+  const views = attachAdsets(buildAdViews(rows, opts.until), opts.adsets || []).filter((v) => v.all.spend > 0);
   const fb = funnelBreakdown(views);
   const funnelRows: FunnelTotal[] = fb.rows.map((r) => ({
     stage: r.stage,
@@ -276,10 +301,12 @@ export function aggregate(
     replyRate: r.results > 0 ? round2((r.replies / r.results) * 100) : 0,
     cpReply: r.replies > 0 ? round2(r.spend / r.replies) : 0,
     purchases: r.purchases,
+    purchasesValued: r.purchasesValued,
+    zeroValuePurchases: Math.max(0, r.purchases - r.purchasesValued),
     revenue: round2(r.revenue),
     roas: round2(r.roas),
-    convRate: r.results > 0 ? round2((r.purchases / r.results) * 100) : 0,
-    basket: r.purchases > 0 ? round2(r.revenue / r.purchases) : 0,
+    convRate: r.results > 0 ? round2((r.purchasesValued / r.results) * 100) : 0,
+    basket: r.purchasesValued > 0 ? round2(r.revenue / r.purchasesValued) : 0,
   }));
   const funnelProducts: FunnelProductRow[] = funnelByProduct(views).map((p) => ({
     product: p.product,
@@ -298,8 +325,26 @@ export function aggregate(
   const gaps = namingGaps(views);
   const naming = { count: gaps.rows.length, spend: gaps.spend, share: gaps.share, rows: gaps.rows as NamingGapRow[] };
 
+  // ── สุขภาพข้อมูล — บอกตรง ๆ ว่าตัวเลขไหนยังเชื่อไม่ได้ แทนที่จะให้ user ไปเจอเอง ──
+  const rowsWithoutAdId = rows.filter((r) => !r.adId).length;
+  const zeroValueShare = total.purchases > 0
+    ? Math.max(0, total.purchases - total.purchasesValued) / total.purchases
+    : 0;
+  const qNotes: string[] = [];
+  if (rowsWithoutAdId > 0) {
+    qNotes.push(
+      `${rowsWithoutAdId} แถวยังไม่มี ad_id (sync ก่อน migration 0003) — แอดคนละตัวที่ชื่อซ้ำยังถูกรวมเป็นแถวเดียวอยู่ · ตัวเลขรายแอดของช่วงนี้ยังเชื่อไม่ได้ ต้อง re-sync ทับก่อน`
+    );
+  }
+  if (zeroValueShare >= 0.2) {
+    qNotes.push(
+      `ออเดอร์ ${Math.round(zeroValueShare * 100)}% ที่ Meta นับ ไม่มีมูลค่าติดมาเลย — "จำนวนออเดอร์" ดิบและ basket ใช้ตัดสินใจไม่ได้ · ROAS กับยอดขายยังเชื่อได้ตามปกติ`
+    );
+  }
+
   return {
     content,
+    quality: { rowsWithoutAdId, zeroValueShare: round2(zeroValueShare), notes: qNotes },
     funnel: { rows: funnelRows, notes: fb.notes },
     funnelProducts,
     naming,
@@ -340,16 +385,21 @@ function finalizeMetric<T extends { _acc?: Acc }>(obj: T, a: Acc): any {
 }
 
 // ตัวชี้ขาด: คนตอบจริง / ROAS / conversion / basket
+// ⚠️ convRate + basket ต้องหารด้วย purchasesValued ไม่ใช่ purchases
+//    Meta นับ onsite_conversion.purchase เป็น "ซื้อ" แม้มูลค่า ๐ — วัดจริง 3 ส.ค. 69 ปน 57%
+//    ถ้าใช้เลขดิบ basket จะเพี้ยนเป็น ฿46 (ของจริงหลักพัน) และ %ปิดการขายพองผิด
 function qualityOf(a: Acc) {
   return {
     replies: a.replies,
     replyRate: a.results > 0 ? round2((a.replies / a.results) * 100) : 0,
     cpReply: a.replies > 0 ? round2(a.spend / a.replies) : 0,
     purchases: a.purchases,
+    purchasesValued: a.purchasesValued,
+    zeroValuePurchases: Math.max(0, a.purchases - a.purchasesValued),
     revenue: round2(a.revenue),
     roas: a.spend > 0 ? round2(a.revenue / a.spend) : 0,
-    convRate: a.results > 0 ? round2((a.purchases / a.results) * 100) : 0,
-    basket: a.purchases > 0 ? round2(a.revenue / a.purchases) : 0,
+    convRate: a.results > 0 ? round2((a.purchasesValued / a.results) * 100) : 0,
+    basket: a.purchasesValued > 0 ? round2(a.revenue / a.purchasesValued) : 0,
   };
 }
 

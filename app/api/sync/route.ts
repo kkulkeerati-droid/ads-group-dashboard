@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchMetaAds } from "@/lib/meta";
 import { fetchTikTokAds } from "@/lib/tiktok";
-import { supabaseEnabled, upsertRows } from "@/lib/supabase";
+import { supabaseEnabled, upsertRows, pruneStale, upsertAdsets } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -45,27 +45,50 @@ async function handle(req: NextRequest) {
 
   const metaToken = process.env.META_ACCESS_TOKEN;
   const ttToken = process.env.TIKTOK_ACCESS_TOKEN;
-  const result: any = { ok: true, since, until, platforms: {} };
+  // prune = ลบแถวในช่วงนี้ที่รอบ sync ปัจจุบันไม่ได้แตะ (แอดถูกลบ/archive → Meta ไม่คืนมาแล้ว)
+  // เปิดไว้เป็นค่าเริ่มต้น: upsert อย่างเดียวไม่มีวันลบแถวค้าง และหลัง migration 0003
+  // แถวเก่า (ad_id = ชื่อแอด) จะอยู่คู่กับแถวใหม่ (ad_id = ตัวเลข) → ตัวเลขเป็นสองเท่า
+  const prune = req.nextUrl.searchParams.get("prune") !== "0";
+  // targeting/งบระดับ adset — payload หนัก ปิดตอน backfill ก้อนใหญ่ด้วย ?adsets=0
+  const wantAdsets = req.nextUrl.searchParams.get("adsets") !== "0";
+  const t0 = Date.now();
+  const syncedAt = new Date().toISOString();
+  const result: any = { ok: true, since, until, prune, platforms: {} };
 
   try {
     if (metaToken) {
       const accountIds = (process.env.META_AD_ACCOUNTS || "")
         .split(",").map((s) => s.trim()).filter(Boolean);
-      const { rows, issues } = await fetchMetaAds({ token: metaToken, accountIds, since, until });
-      const n = await upsertRows(rows);
-      result.platforms.meta = { fetched: rows.length, upserted: n, issues: issues.length };
+      // เหลือเวลาน้อย (maxDuration 60s) → ข้าม adsets ไปก่อน ตัวเลขหลักสำคัญกว่า
+      const withAdsets = wantAdsets && Date.now() - t0 < 20_000;
+      const { rows, issues, adsets } = await fetchMetaAds({
+        token: metaToken, accountIds, since, until, withAdsets,
+      });
+      const n = await upsertRows(rows, syncedAt);
+      // ลบได้เฉพาะบัญชีที่ "คืนแถวจริงรอบนี้" — บัญชีที่ error หรือคืนว่าง ห้ามแตะของเก่า
+      const touched = [...new Set(rows.map((r) => r.accountId))];
+      const pruned = prune ? await pruneStale("meta", since, until, syncedAt, touched) : 0;
+      const savedAdsets = adsets.length ? await upsertAdsets(adsets) : 0;
+      result.platforms.meta = {
+        fetched: rows.length, upserted: n, pruned, accounts: touched.length,
+        adsets: savedAdsets, issues: issues.length,
+        ...(issues.length ? { issueList: issues.slice(0, 5) } : {}),
+      };
     }
     if (ttToken) {
       const advertiserIds = (process.env.TIKTOK_ADVERTISER_IDS || "")
         .split(",").map((s) => s.trim()).filter(Boolean);
       const rows = await fetchTikTokAds({ token: ttToken, advertiserIds, since, until });
-      const n = await upsertRows(rows);
-      result.platforms.tiktok = { fetched: rows.length, upserted: n };
+      const n = await upsertRows(rows, syncedAt);
+      const touched = [...new Set(rows.map((r) => r.accountId))];
+      const pruned = prune ? await pruneStale("tiktok", since, until, syncedAt, touched) : 0;
+      result.platforms.tiktok = { fetched: rows.length, upserted: n, pruned };
     }
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e.message || String(e) }, { status: 502 });
   }
 
+  result.tookMs = Date.now() - t0;
   return NextResponse.json(result);
 }
 

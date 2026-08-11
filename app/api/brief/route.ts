@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loadRows, addDays } from "@/lib/digest-load";
 import { buildBrief, briefToTelegram } from "@/lib/brief";
+import { readAdsets } from "@/lib/supabase";
 import { shareTokenFor } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -43,10 +44,14 @@ async function handle(req: NextRequest) {
   if (weekRows.length === 0)
     return NextResponse.json({ ok: false, error: `ไม่มีข้อมูลช่วง ${weekSince}–${weekUntil}` }, { status: 404 });
 
+  // targeting/งบจริง — ถ้ายังไม่ได้รัน migration 0003 จะได้ [] แล้วถอยไปเดาจากชื่อเหมือนเดิม
+  const adsets = await readAdsets("all").catch(() => []);
+
   const brief = buildBrief({
     date, todayRows, weekRows, weekSince, weekUntil,
     dayComplete: date < todayBangkok(),
     nowISO: new Date().toISOString(),
+    adsets,
   });
 
   if (!send) return NextResponse.json(brief);

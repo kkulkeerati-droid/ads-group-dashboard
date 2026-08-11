@@ -8,14 +8,14 @@
 //    ถ้าเอา ROAS ตอนบ่ายมาสั่งปิด จะปิดตัวที่กำลังจะทำเงินตอนกลางคืนทิ้ง
 
 import {
-  buildAdViews, callFor, fatigueOf, funnelBreakdown, funnelByProduct, namingGaps,
+  buildAdViews, attachAdsets, callFor, fatigueOf, funnelBreakdown, funnelByProduct, namingGaps, adLabel,
   contentSignals, audienceTodos, cloneChecks, cloneFamilies, cannibalCheck, boardSignal,
   ACTION_META, FUNNEL_LABEL, MAX_CLONES_PER_PARENT,
   type AdView, type AeAction, type AeCall, type FunnelRow, type FunnelByProductRow,
   type NamingGap, type ContentSignal, type CloneCheck, type CloneFamily, type Cannibal, type BoardSignal,
 } from "./ae";
 import { ROAS_SCALE } from "./decide";
-import type { AdRow } from "./types";
+import type { AdRow, AdsetInfo } from "./types";
 
 export interface BriefItem {
   action: AeAction; icon: string; label: string;
@@ -70,6 +70,8 @@ function agg(rows: AdRow[]) {
 export function buildBrief(opts: {
   date: string; todayRows: AdRow[]; weekRows: AdRow[]; weekSince: string; weekUntil: string;
   dayComplete?: boolean; nowISO?: string;
+  /** targeting/งบจริงระดับ adset — ถ้ามี จะใช้ทับงบที่เดาจากชื่อแอด */
+  adsets?: AdsetInfo[];
 }): Brief {
   const { date, todayRows, weekRows, weekSince, weekUntil } = opts;
   const today = agg(todayRows);
@@ -80,7 +82,7 @@ export function buildBrief(opts: {
   };
 
   // ── ตัดสินใจจาก 7 วัน ไม่ใช่จากวันนี้ ──
-  const views = buildAdViews(weekRows, weekUntil, 3, 4);
+  const views = attachAdsets(buildAdViews(weekRows, weekUntil, 3, 4), opts.adsets || []);
   const withSpend = views.filter((v) => v.all.spend > 0);
 
   // กลุ่มไหนมียอดขาย (ไว้แยก "ขายไม่ออก" ออกจาก "ยอดไม่เข้าระบบ")
@@ -99,7 +101,8 @@ export function buildBrief(opts: {
     const m = ACTION_META[call.action];
     items.push({
       action: call.action, icon: m.icon, label: m.label,
-      adName: v.adName, accountName: v.accountName, product: v.product,
+      // ต่อท้าย ad_id เมื่อชื่อซ้ำ — คำสั่ง "ปิดตัวนี้" ต้องชี้ได้ว่าตัวไหน ไม่งั้นทีมปิดผิดตัว
+      adName: adLabel(v), accountName: v.accountName, product: v.product,
       funnel: FUNNEL_LABEL[v.funnel],
       spend: r2(v.all.spend), revenue: r2(v.all.revenue), roas: r2(v.all.roas), replies: v.all.replies,
       roasRecent: v.recent.spend > 200 ? r2(v.recent.roas) : null,
@@ -118,7 +121,7 @@ export function buildBrief(opts: {
   const audience = audienceTodos(withSpend);
   const clones = cloneChecks(withSpend)
     .filter((c) => c.verdict !== "keep")
-    .map((c) => ({ adName: c.clone.adName, parent: c.parent.adName, verdict: c.verdict, why: c.why }));
+    .map((c) => ({ adName: adLabel(c.clone), parent: adLabel(c.parent), verdict: c.verdict, why: c.why }));
   const families = cloneFamilies(withSpend).filter((f) => f.over);
   const cannibal = cannibalCheck(withSpend);
   const board = boardSignal(withSpend);

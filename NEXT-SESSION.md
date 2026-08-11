@@ -1,6 +1,29 @@
 # คำสั่งงานสำหรับ session ถัดไป
 
-> เขียน 11 ส.ค. 69 · **มีบั๊กระดับรากที่ต้องแก้ก่อนอย่างอื่นทั้งหมด — อ่านข้อ 1 ให้จบก่อนแตะอะไร**
+> เขียน 11 ส.ค. 69 · อัปเดต 11 ส.ค. 69 (รอบบ่าย)
+
+---
+
+# ⛳ สถานะล่าสุด — โค้ดแก้เสร็จแล้ว เหลือ "รัน SQL + backfill"
+
+**ทำเสร็จแล้ว (โค้ดอยู่ในเครื่อง ยังไม่ deploy):**
+- ✅ เปลี่ยน key เป็น `ad_id` ครบสาย meta → supabase → ae → aggregate → dashboard/brief
+- ✅ `pruneStale` — ลบแถวค้างที่ Meta ไม่คืนมาแล้ว (แก้ทั้งเรื่อง ฿271 และกันนับซ้ำหลัง migration)
+- ✅ ดึง targeting/งบ/created_time ระดับ adset + ตาราง `ad_adsets` + `attachAdsets()` ทับการเดาจากชื่อ
+- ✅ selftest **71 ข้อ ผ่านหมด** (เพิ่มเคสชื่อซ้ำ / บันไดออเดอร์ / ตารางชื่อ / clone หาตัวแม่) · `tsc` + `build` ผ่าน
+- ✅ **พิสูจน์ข้อ 4.1 แล้ว — สมมติฐานเดิมผิด** (ดูข้อ 4.1 ที่เขียนใหม่ด้านล่าง)
+
+**เหลือทำ เรียงตามนี้ ห้ามสลับ:**
+```
+1. รัน supabase/migrations/0003_ad_id.sql ใน Supabase SQL Editor   ← ต้องให้ user เห็นก่อน
+2. node scripts/deploy-api.mjs   (git add supabase/migrations/0003_ad_id.sql ก่อน!)
+3. backfill ทีละ ≤3-4 วัน:
+   /api/sync?key=<CRON_SECRET>&since=2026-08-04&until=2026-08-07&prune=1
+   /api/sync?key=<CRON_SECRET>&since=2026-08-08&until=2026-08-11&prune=1
+4. reverse-check ตามข้อ 2 ขั้น 8
+```
+⚠️ **โค้ดใหม่ทำงานกับ DB เก่าได้** (ถอยไปโหมดชื่ออัตโนมัติ) → deploy ก่อน migrate ไม่พัง
+แต่ **ตัวเลขรายแอดจะยังผิดจนกว่าจะ migrate + backfill ครบ**
 
 ---
 
@@ -69,67 +92,50 @@ Meta มองเป็นคนละ ad (คนละ ad_id) · **P-FLOW 2 บ
 - `namingGaps` (ดูจากชื่อ ไม่ได้ดูจากตัวเลข)
 
 > ⚠️ ค่าแอดรวม P-FLOW 2: Meta ฿14,333.92 vs dashboard ฿14,605 (ต่าง ฿271 = 1.9%)
-> **ยังไม่รู้สาเหตุ** — เดาว่า sync lag หรือ Meta อัปเดตย้อนหลัง · ต้องเช็คด้วย
+> **11 ส.ค. บ่าย:** ยืนยันฝั่ง Meta แล้ว — ผลรวมรายวัน 4–10 ส.ค. = ฿14,333.92 **เป๊ะ**
+> (1,929.27+3,137.97+2,169.69+1,104.90+2,238.97+2,465.97+1,287.15)
+> **สมมติฐานนำ (ยังพิสูจน์ไม่ได้ — ต้องมี Supabase creds):** แถวค้างใน Supabase ของแอดที่ Meta
+> ไม่คืนมาแล้ว (ถูกลบ/archive) · `upsert` ไม่มีวันลบแถว → แถวเก่าบวกเข้ายอดรวมตลอดไป
+> **→ `pruneStale()` ที่เพิ่มเข้าไปแล้วจะแก้อาการนี้ให้เอง** · หลัง backfill ถ้ายอดลงมาเป็น ฿14,333.92 = พิสูจน์แล้ว
+> ถ้ายังไม่ตรง แปลว่าเป็นเรื่องอื่น อย่าเพิ่งปิดประเด็น
 
 ---
 
-## 2) แผนแก้ — เปลี่ยน key เป็น ad_id
+## 2) แผนแก้ — เปลี่ยน key เป็น ad_id · ✅ โค้ดเสร็จหมดแล้ว
 
-### ขั้น 1 · Supabase migration (ส่วนที่เสี่ยงสุด ทำก่อนและทำอย่างเดียว)
-สร้าง `supabase/migrations/0003_ad_id.sql` แล้วรันใน Supabase → SQL Editor
+### ขั้น 1 · Supabase migration — ⏳ **รออยู่ตรงนี้ (ต้อง user รัน)**
+ไฟล์: `supabase/migrations/0003_ad_id.sql`
 
-**แนะนำท่าปลอดภัย: เพิ่มคอลัมน์ + สร้าง unique index ใหม่ที่ fallback ไปที่ชื่อเมื่อ ad_id ว่าง**
-(ข้อมูลเก่าไม่มี ad_id — ถ้าบังคับ ad_id ไม่ null จะพังทันที)
-```sql
-alter table public.ad_metrics_daily add column if not exists ad_id text;
+ท่าที่เลือก + **ทำไมไม่ใช้ท่าที่วางไว้เดิม**:
+แผนเดิมเสนอ `unique (platform, account_id, coalesce(ad_id, ad_name), date)` — **ใช้ไม่ได้**
+เพราะ `on_conflict` ของ PostgREST รับได้แค่ "รายชื่อคอลัมน์" map ไป expression index ไม่ได้ (42P10)
+→ เปลี่ยนเป็น **เติม `ad_id = ad_name` ให้แถวเก่า แล้ว unique ด้วยคอลัมน์ล้วน** `(platform, account_id, ad_id, date)`
+ได้ผลเหมือนกันแต่ PostgREST ใช้ได้ตรง ๆ · `readRows` มองแถวที่ `ad_id = ad_name` ว่า "ยังไม่มี ad_id จริง"
 
--- unique ใหม่: มี ad_id ใช้ ad_id · ไม่มี (แถวเก่า) ใช้ชื่อเหมือนเดิม
-create unique index if not exists uq_metrics_adid
-  on public.ad_metrics_daily (platform, account_id, coalesce(ad_id, ad_name), date);
+ในไฟล์ทำ 4 อย่าง: เพิ่มคอลัมน์ → เติม ad_id แถวเก่า → **drop unique เก่า** (หาชื่อ constraint เอง
+ไม่ hardcode) → สร้างตาราง `ad_adsets`
+⚠️ **ต้อง drop ของเดิม** ไม่งั้นแอดชื่อซ้ำ insert ไม่ได้เลย (error 23505) = อาการเปลี่ยนจาก
+"ตัวเลขผิด" เป็น "sync พังทั้งรอบ" ซึ่งแย่กว่าเดิม
 
--- ยังไม่ต้อง drop ของเดิม จนกว่าจะ re-sync ครบและยืนยันตัวเลขแล้ว
-```
-⚠️ `on_conflict` ของ PostgREST ต้องชี้ไปที่ index นี้ — **เทสกับ 1 วันก่อน แล้วค่อยยิงทั้งช่วง**
-ถ้า PostgREST ไม่รับ expression index ให้ถอยไปท่า B: สร้างตารางใหม่ `ad_metrics_daily_v2`
-ที่มี `unique (platform, account_id, ad_id, date)` แล้วย้าย read/write ไปที่ตารางใหม่ (roll back ง่ายกว่า)
+### ขั้น 2–6 · โค้ด ✅ เสร็จแล้วทั้งหมด
+| ไฟล์ | ทำอะไร |
+|---|---|
+| `lib/meta.ts` | fields เพิ่ม `ad_id,adset_id,adset_name,campaign_id,campaign_name` · `purchasesValued` · `fetchAccountAdsets()` |
+| `lib/types.ts` | `AdRow.adId` + adset/campaign · `adKey()` helper กลาง · `Metricized.purchasesValued/zeroValuePurchases` · `AdsetInfo` · `Metrics.quality` |
+| `lib/supabase.ts` | `rowAdId()` · dedupe ตาม ad_id (+โหมดถอยไปชื่อ) · `on_conflict` ใหม่ · `updated_at` ส่งเองทุกครั้ง · `pruneStale()` · `upsertAdsets()`/`readAdsets()` |
+| `lib/ae.ts` | `buildAdViews` key = `adKey()` · `nameDupes`/`dupeRank` · `adLabel()` · `attachAdsets()` · `Slice.purchasesValued` |
+| `lib/aggregate.ts` | `adMap`/`groupAds`/`names` Set = `adKey()` · `qualityOf` ใช้ purchasesValued · `quality` block |
+| `app/dashboard.tsx` | `adDisplay()` ต่อท้าย ad_id เมื่อชื่อซ้ำ · แถบ 🧪 คุณภาพข้อมูล · คอลัมน์ "กี่ตัว" |
+| `app/api/sync` | `?prune=` (default เปิด) · `?adsets=` · รายงาน `pruned`/`adsets`/`tookMs` |
 
-### ขั้น 2 · `lib/meta.ts`
-```
-fields=ad_name,... → เพิ่ม ad_id
-rows.push({ ..., adId: r.ad_id })
-```
-
-### ขั้น 3 · `lib/types.ts`
-`AdRow` เพิ่ม `adId?: string`
-
-### ขั้น 4 · `lib/supabase.ts`
-- `upsertRows` map `ad_id: r.adId || null`
-- **แก้ dedupe key บรรทัด 57** `${platform}|${account_id}|${ad_name}|${date}` → ใส่ `ad_id` แทน `ad_name`
-  (ยังต้องมี dedupe ไว้ กันเคส Meta คืน ad_id ซ้ำในหน้าเดียว)
-- `on_conflict=` เปลี่ยนให้ตรง index ใหม่
-- `readRows` map `adId: d.ad_id`
-
-### ขั้น 5 · `lib/ae.ts` → `buildAdViews`
-```
-const key = `${r.accountId}::${r.adName}`   // เดิม
-const key = `${r.accountId}::${r.adId || r.adName}`   // ใหม่ (fallback กันข้อมูลเก่า)
-```
-`AdView` เพิ่ม `adId` ไว้โชว์/debug
-
-### ขั้น 6 · `lib/aggregate.ts`
-`adMap` key `${accKey}::${r.adName}` → ใส่ adId · **`groupAds` / `names` Set ที่ใช้นับจำนวน ads ต้องเปลี่ยนตาม**
-(ไม่งั้นจำนวน ads จะยังนับแบบรวมชื่อ)
-
-### ขั้น 7 · ⚠️ สิ่งที่จะพังตามหลังแก้ — ต้องจัดการด้วย
-1. **ชื่อซ้ำจะกลายเป็นหลายแถวในตาราง** → user จะงงว่าทำไมเห็นชื่อเดียวกัน 4 บรรทัด
-   → ต้องโชว์ตัวแยก เช่น `AI/Ultra/600/7Aug` + ท้าย ad_id 6 ตัว หรือ `(1/4)`
-2. **`cloneChecks` จับตัวแม่จากชื่อ** — พอชื่อซ้ำหลายตัว `byName` จะชี้ผิดตัว
-   → ต้องคิดใหม่ว่า "ตัวแม่" คือ ad_id ไหน (อาจต้องใช้ adset_id หรือ created_time)
-3. **`namingGaps` จะเสนอชื่อซ้ำกันเอง** (4 แถวชื่อเดียวกัน → เสนอชื่อใหม่เหมือนกัน 4 อัน)
-   → รวมแสดงเป็นกลุ่มตามชื่อ แต่คิดตัวเลขรายตัว
-4. **`scripts/selftest.mjs` ต้องเพิ่มเทสเคสชื่อซ้ำ** — สร้าง 2 ad ID ชื่อเดียวกัน แล้วยืนยันว่าไม่ถูกรวม
-5. **ต้อง re-sync ข้อมูลย้อนหลัง** ให้ ad_id เต็ม (`/api/sync?key=<CRON_SECRET>&since=&until=` ทีละ ≤3-4 วัน)
-   แถวเก่าที่ ad_id ว่างจะอยู่คู่กับแถวใหม่ → **ต้องลบแถวเก่าของช่วงที่ re-sync แล้ว** ไม่งั้นนับซ้ำ
+### ขั้น 7 · ✅ 5 อย่างที่จะพังตามหลัง — จัดการครบแล้ว
+1. ✅ ชื่อซ้ำหลายแถว → `adDisplay()` / `adLabel()` ต่อท้าย ad_id 6 ตัว (ก๊อปไปค้นใน Ads Manager ได้จริง)
+   + tooltip บอกว่า "บัญชีนี้มีแอดชื่อนี้ N ตัว บรรทัดนี้คือตัวเดียว"
+2. ✅ `cloneChecks` จับตัวแม่ = **ตัวที่ `firstSeen` เก่าที่สุด** (clone เกิดทีหลังเสมอ) เท่ากันค่อยเอาตัวที่ใช้เงินมากสุด
+3. ✅ `namingGaps` รวมเป็น 1 บรรทัดต่อชื่อ + คอลัมน์ `ads` บอกว่าต้องไปแก้กี่ตัว
+4. ✅ selftest ข้อ 11/13/14 ครอบเคสนี้แล้ว (71 ข้อ ผ่านหมด)
+5. ✅ `pruneStale()` — ลบแถวที่รอบ sync ไม่ได้แตะ ใช้ `updated_at` เป็น watermark
+   **เรียกหลัง upsert สำเร็จเท่านั้น** และลบเฉพาะบัญชีที่คืนแถวจริงรอบนี้ (บัญชี error ไม่โดนแตะ)
 
 ### ขั้น 8 · reverse-check ก่อนบอกว่าเสร็จ
 เทียบกับ Ads Manager ตรง ๆ อย่างน้อย 3 ตัวเลข:
@@ -163,18 +169,39 @@ AI/Ultra/600/7Aug (ad …438208910686) → ค่าแอด ฿429.66 · ROAS 
 
 ## 4) เรื่องอื่นที่ยังค้าง
 
-### 4.1 ⚠️ จำนวนออเดอร์เหวี่ยงผิดปกติ (ยังไม่พิสูจน์)
-| วัน | ยอดขาย | ออเดอร์ | basket |
-|---|---|---|---|
-| 3 ส.ค. | ฿7,649 | **168** | ฿46 |
-| 6 ส.ค. | ฿6,458 | 61 | ฿106 |
-| 10 ส.ค. | ฿7,170 | **4** | **฿1,793** |
+### 4.1 ✅ จำนวนออเดอร์เหวี่ยง 40 เท่า — **พิสูจน์แล้ว · สมมติฐานเดิมผิด**
 
-ยอดขายนิ่ง แต่ออเดอร์เหวี่ยง 40 เท่า
-**สมมติฐาน (ยังไม่พิสูจน์):** `lib/meta.ts` หยิบ **จำนวน** จาก `findFirst(r.actions, PURCHASE_TYPES)`
-และ **มูลค่า** จาก `findFirst(r.action_values, PURCHASE_TYPES)` — เป็นคนละ `action_type` กันได้
-วิธีพิสูจน์: ดึง raw `actions` + `action_values` ของวันที่ 3 กับ 10 ส.ค. มาดูว่า type ไหนมีค่าบ้าง
-**สำคัญ** เพราะ "จำนวนออเดอร์" คือด่านที่บล็อกการสเกลอยู่ (บันไดออเดอร์ 10/20/30)
+**สมมติฐานเดิม (count กับ value มาจากคนละ `action_type`) = ผิด**
+ดึงระดับบัญชี P-FLOW 2 รายวัน 3–10 ส.ค. → `onsite_conversion_purchase` == `actions:omni_purchase`
+และ `omni_purchase_values` == `action_values:onsite_conversion.purchase` **ตรงกันทุกวัน**
+`findFirst` ไม่ได้หยิบข้าม type · **โค้ดไม่ผิด · Ads Manager โชว์เลขเดียวกัน** (ออเดอร์ 88 ตรงกัน)
+
+**ของจริง: `onsite_conversion.purchase` ไม่ใช่ "ออเดอร์"**
+ระดับแอด 3 ส.ค. (39 แอด · ค่าแอดรวม ฿2,213.41 ✅ มูลค่ารวม ฿3,259.90 ✅ ตรงบัญชีถึงสตางค์ = รายการครบ)
+
+| อาการ | ตัวเลข |
+|---|---|
+| ซื้อที่ **ไม่มีมูลค่าติดมาเลย** | **35 จาก 61 = 57%** |
+| แอด `1 CUT/Buy/600/1Aug` | ใช้ **฿6.41** → นับ **11 ซื้อ** มูลค่า ๐ |
+| `AI/ยอดขาย/Ultra/600/23Jul` | 6 ซื้อ มูลค่า ฿10.90 = **฿1.82/ชิ้น** |
+| `AI/1CC/600/31Jul` | 2 ซื้อ มูลค่า ฿10.00 = **฿5.00/ชิ้น** |
+| ซื้อที่ราคาต่อชิ้นสมเหตุผล (สินค้าจริง ฿499–1,490) | **4 จาก 61 = 6.6%** |
+
+**สรุปว่าอะไรเชื่อได้/ไม่ได้:**
+- ✅ `revenue` / `ROAS` เชื่อได้ (ผลรวมตรงถึงสตางค์ 2 ชั้น)
+- ❌ `purchases` ดิบไม่ใช่จำนวนออเดอร์จริง · `basket` และ `convRate` เป็นขยะถ้าหารด้วยมัน
+- ⚠️ **อันตรายที่สุด** — บันไดออเดอร์ 10/20/30 กินเลขนี้ → 3 ส.ค. 168 "ออเดอร์" = **ไฟเขียวปลอมให้สเกล**
+
+**แก้แล้วอย่างไร:**
+- เพิ่ม `purchasesValued` (นับเฉพาะแถวที่ revenue > 0) ทุกชั้น — `lib/meta.ts` → DB → `Slice` → `Metricized`
+- `callFor` บันไดออเดอร์ · `costIsStable` · กติกาแอดมด · เกณฑ์ LAL 20 ราย → ใช้ `purchasesValued` หมดแล้ว
+- `convRate` / `basket` หารด้วย `purchasesValued`
+- คง `purchases` ดิบไว้เท่าที่ Meta บอก (ไม่งั้นเทียบ Ads Manager ไม่ได้อีก)
+- แถบ 🧪 บน dashboard ฟ้องเองเมื่อออเดอร์มูลค่า ๐ เกิน 20%
+- selftest ข้อ 12 ล็อกไว้: ROAS 5 · Meta นับ 32 ซื้อ · มีมูลค่าจริง 2 → **ต้องได้ KEEP ไม่ใช่ SCALE**
+
+**ทางแก้จริงระยะยาว** = ส่ง offline conversion กลับเข้า Meta (backlog 4.4) — ตราบใดที่ยังไม่ส่ง
+Meta จะ optimize หา "คนกดปุ่มซื้อในแชท" ไม่ใช่ "คนจ่ายเงินจริง"
 
 ### 4.2 📲 Telegram — ต้องให้ user ทำเอง
 Vercel production มีแค่ `CRON_SECRET` · ยังไม่มี `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID`
@@ -189,10 +216,22 @@ cd "/Users/thanatos66/Downloads/Kantamaze 01 - for Content Carousel/dashboard" &
 ข้อความเรนเดอร์เทสแล้ว 3,786 ตัวอักษร tag ครบ — ใส่ token แล้วส่งได้เลย
 ⚠️ `CRON_SECRET` เป็น Sensitive **อ่านกลับไม่ได้** ต้องขอจาก user หรือ rotate + `gh secret set`
 
-### 4.3 อ่าน targeting / งบ จาก Meta แทนการเดาจากชื่อ
-research แล้วว่าทำได้ — `targeting` · `daily_budget` · `created_time` · `effective_status` (ระดับ adset)
-**ทำพร้อมกับข้อ 2 ได้เลย** เพราะต้องแตะ `lib/meta.ts` + Supabase migration เหมือนกัน — ตีสองงานด้วยหินก้อนเดียว
-รายละเอียดใน WORKFLOW.md Phase 12 ข้อ 4
+### 4.3 ✅ อ่าน targeting / งบ จาก Meta แทนการเดาจากชื่อ — **ทำแล้ว**
+- `fetchAccountAdsets()` ใน `lib/meta.ts` ดึง `targeting` · `daily_budget` · `lifetime_budget` · `created_time` · `effective_status`
+  แล้ว **กลั่นเหลือเฉพาะที่ใช้ตัดสินใจ** (age/genders/countries/interests/customAudiences/lookalikes/isBroad)
+  — ไม่เก็บ targeting ดิบ เพราะ payload 380KB ต่อบัญชี เกิน token limit และไม่ได้ใช้
+- เก็บลงตาราง `ad_adsets` (snapshot สถานะตอนนี้ ไม่ใช่รายวัน — Meta ไม่เก็บ targeting ย้อนหลัง)
+- `attachAdsets(views, adsets)` ใน `lib/ae.ts` เอาของจริงทับการเดา:
+  - **งบจริงชนะงบในชื่อ** (ถ้า adset ใช้ CBO → `daily_budget` เป็น null → ถอยไปใช้ชื่อ)
+  - `isBroad` (ไม่มี interest + ไม่มี custom audience) → TOF, `funnelSure = true`
+  - มีแต่ LAL → TOF, sure
+  - มี custom audience ที่ไม่ใช่ LAL และชื่ออ่านไม่ออก → MOF แต่ **ยังไม่ถือว่าชัวร์** (API แยก MOF/BOF ไม่ได้)
+    → ยังโผล่ในตาราง "ชื่อไม่ครบ" ให้ทีมไปแก้ชื่อ
+- ต่อเข้า `/api/metrics` (`m.adsets`) และ `/api/brief` แล้ว · ไม่มีข้อมูล = ถอยไปเดาจากชื่อเหมือนเดิม
+
+⚠️ **สิ่งที่ยังไม่ทำ — ต้องถาม user ก่อน:** งบเป็นของ **adset** ไม่ใช่ของแอด
+ยิง 1:1:3 = 3 แอดใช้งบก้อนเดียวกัน · ตอนนี้กติกาแอดมดเทียบ "spend รายแอด vs 30% ของงบ adset เต็มก้อน"
+ถ้าจะหารเฉลี่ยต่อจำนวนแอดในชุด ความไวของกฎจะเปลี่ยน — **ห้ามเปลี่ยนเงียบ ๆ**
 
 ### 4.4 backlog เดิม
 กราฟ ROAS รายวัน (series มี byGroup/byFunnel แล้ว ขาด revenue/replies ต่อวัน) ·
@@ -228,12 +267,22 @@ funnel 7 วัน: TOF 74% · MOF 26% · BOF 0% (BOF 0 คือของจร
 เส้น ROAS ที่ user กำหนด: 🟢 ≥3.5 · 🟡 2-3.5 · 🟠 1-2 · 🔴 <1
 ```
 
-**❌ ยังเชื่อไม่ได้จนกว่าจะแก้ ad_id**
+**❌ ยังเชื่อไม่ได้จนกว่าจะ migrate + backfill เสร็จ**
 ```
 ROAS/ค่าแอด/ออเดอร์ "รายแอด" ทุกตัวใน dashboard และหน้า /brief
 คำสั่ง STOP/SCALE/CLONE/REDUCE ทั้งหมด
-จำนวนออเดอร์รวม (ดูข้อ 4.1)
 ```
+**❌ เชื่อไม่ได้ถาวร จนกว่าจะส่ง offline conversion กลับเข้า Meta**
+```
+"จำนวนออเดอร์" ดิบ (purchases) — 57% เป็น event มูลค่า ๐ · ใช้ purchasesValued แทน
+basket / %ปิดการขาย ที่คิดจาก purchases ดิบ
+```
+
+**🕳️ ช่องที่เทสยังไม่ครอบ (รู้ตัวไว้ อย่าเผลอเชื่อว่าปลอดภัย)**
+`selftest.mjs` คอมไพล์แค่ `lib/ae.ts` `decide.ts` `content.ts` →
+**`upsertRows` / `pruneStale` ใน `lib/supabase.ts` ไม่มีเทสเลย** ทั้งที่เป็นจุดที่บั๊กรากเกิด
+โดยเฉพาะ "โหมดถอยไป ad_name เมื่อยังไม่ได้ migrate" (ต้อง merge ใหม่ทั้งก้อน ไม่ใช่แค่ตัดคอลัมน์
+— เคยเขียนผิดรอบแรก จะได้ Postgres 21000 ทั้งรอบ) · ต้อง mock `fetch` ถึงจะเทสได้
 
 ---
 
