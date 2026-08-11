@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchMetaAds, fetchMetaAdsets } from "@/lib/meta";
 import { fetchTikTokAds } from "@/lib/tiktok";
-import { supabaseEnabled, upsertRows, pruneStale, upsertAdsets, readRows } from "@/lib/supabase";
+import { supabaseEnabled, upsertRows, pruneStale, upsertAdsets, readRows, rowFreshness } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -50,6 +50,8 @@ async function handle(req: NextRequest) {
   if (req.nextUrl.searchParams.get("check") === "1") {
     const acct = req.nextUrl.searchParams.get("account") || "";
     const all = await readRows("meta", since, until);
+    // prune ทำงานจริงไหม — แถวที่ updated_at เก่ากว่ารอบ sync ล่าสุด = แถวค้างที่ไม่โดนลบ
+    const fresh = await rowFreshness("meta", since, until, acct || undefined);
     const rows = acct ? all.filter((r) => r.accountId === acct) : all;
     const sum = (f: (r: (typeof rows)[0]) => number) =>
       Math.round(rows.reduce((s, r) => s + f(r), 0) * 100) / 100;
@@ -76,6 +78,7 @@ async function handle(req: NextRequest) {
         rowsWithoutAdId: rows.filter((r) => !r.adId).length,
       },
       // แยกรายวัน — เวลายอดรวมไม่ตรง ตัวนี้บอกว่ากองอยู่วันไหน (เดาไม่ได้ ต้องเห็น)
+      freshness: fresh,
       byDate: [...rows.reduce((m, r) => {
         const d = r.date || "(ไม่มีวันที่)";
         const a = m.get(d) || { spend: 0, rows: 0, names: new Set<string>() };

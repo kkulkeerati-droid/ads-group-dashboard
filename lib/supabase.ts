@@ -176,6 +176,32 @@ export async function pruneStale(
   return Array.isArray(gone) ? gone.length : 0;
 }
 
+/** แถวในช่วงนี้ "สดแค่ไหน" — ใช้ตอบคำถามเดียว: prune ทำงานจริงไหม
+ *  ถ้ามีแถวที่ updated_at เก่ากว่ารอบ sync ล่าสุด แปลว่า prune ไม่ได้ลบมัน
+ *  = แถวค้าง (ตัวเลขเกินจริง) · ถ้าสดหมด = ตัวเลขคือของที่ Meta คืนมาจริง ๆ */
+export async function rowFreshness(
+  platform: "meta" | "tiktok",
+  since: string,
+  until: string,
+  accountId?: string
+): Promise<{ rows: number; oldest: string | null; newest: string | null; buckets: Record<string, number> }> {
+  if (!supabaseEnabled()) return { rows: 0, oldest: null, newest: null, buckets: {} };
+  let q = `${TABLE}?select=updated_at&platform=eq.${platform}&date=gte.${since}&date=lte.${until}&limit=50000`;
+  if (accountId) q += `&account_id=eq.${accountId}`;
+  const res = await sb(q, { method: "GET" });
+  const data = (await res.json()) as { updated_at: string }[];
+  const buckets: Record<string, number> = {};
+  let oldest: string | null = null, newest: string | null = null;
+  for (const d of data) {
+    const t = d.updated_at || "";
+    if (!oldest || t < oldest) oldest = t;
+    if (!newest || t > newest) newest = t;
+    const day = t.slice(0, 13) + ":00"; // ราย ชม.
+    buckets[day] = (buckets[day] || 0) + 1;
+  }
+  return { rows: data.length, oldest, newest, buckets };
+}
+
 // ─── targeting/งบระดับ adset (snapshot สถานะตอนนี้ ไม่ใช่รายวัน) ────────
 export async function upsertAdsets(list: AdsetInfo[]): Promise<number> {
   if (!supabaseEnabled() || list.length === 0) return 0;
