@@ -75,6 +75,15 @@ async function handle(req: NextRequest) {
         distinctNames: new Set(rows.map((r) => `${r.accountId}::${r.adName}`)).size,
         rowsWithoutAdId: rows.filter((r) => !r.adId).length,
       },
+      // แยกรายวัน — เวลายอดรวมไม่ตรง ตัวนี้บอกว่ากองอยู่วันไหน (เดาไม่ได้ ต้องเห็น)
+      byDate: [...rows.reduce((m, r) => {
+        const d = r.date || "(ไม่มีวันที่)";
+        const a = m.get(d) || { spend: 0, rows: 0, names: new Set<string>() };
+        a.spend += r.spend; a.rows++; a.names.add(`${r.accountId}::${r.adName}`);
+        return m.set(d, a);
+      }, new Map<string, { spend: number; rows: number; names: Set<string> }>()).entries()]
+        .map(([date, a]) => ({ date, spend: Math.round(a.spend * 100) / 100, rows: a.rows, names: a.names.size }))
+        .sort((x, y) => x.date.localeCompare(y.date)),
       byAccount: [...byAcct.entries()]
         .map(([id, a]) => ({ id, ...a, spend: Math.round(a.spend * 100) / 100, revenue: Math.round(a.revenue * 100) / 100 }))
         .sort((x, y) => y.spend - x.spend),
