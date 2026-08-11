@@ -41,8 +41,6 @@ interface FetchArgs {
   accountIds?: string[];
   since: string;
   until: string;
-  /** ดึง targeting/งบระดับ adset ด้วยไหม — payload หนัก ปิดไว้ตอน backfill ก้อนใหญ่ */
-  withAdsets?: boolean;
 }
 
 // ⚠️ ข้อความ error ถูกส่งกลับไปที่ client (accountIssues) และขึ้นใน log ของ GitHub Actions
@@ -290,21 +288,45 @@ export async function fetchMetaAds(args: FetchArgs): Promise<MetaResult> {
       });
   });
 
-  // targeting/งบ — เป็นของแถม ล้มได้โดยไม่ทำให้ตัวเลขหลักพัง
-  const adsets: AdsetInfo[] = [];
-  if (args.withAdsets) {
-    const got = await Promise.allSettled(accounts.map((a) => fetchAccountAdsets(token, a.id)));
-    got.forEach((r, i) => {
-      if (r.status === "fulfilled") adsets.push(...r.value);
-      else
-        issues.push({
-          id: accounts[i].id,
-          name: accounts[i].name,
-          status: "ADSET_FETCH_ERROR",
-          reason: redact(String(r.reason)).slice(0, 200),
-        });
-    });
+  return { rows, issues, adsets: [] };
+}
+
+// ─── targeting/งบ — แยกออกมาเป็นคนละงาน ──────────────────────────────
+// ⚠️ เคยเอาไปไว้ข้างใน fetchMetaAds แล้วโดน FUNCTION_INVOCATION_TIMEOUT (Vercel 60s)
+//    เพราะ payload targeting หนักมากและมี ~20 บัญชี · แถมการ์ดเวลาที่วางไว้ก็ไร้ผล
+//    (เช็ค elapsed ทันทีหลังตั้ง t0 → ได้ 0 เสมอ) — ต้องให้ผู้เรียกคุมเวลาเอง
+//
+// เดินทีละบัญชีไม่ขนานกัน เพื่อให้เช็ค deadline ได้จริงระหว่างทาง
+// ดึงไม่ครบไม่เป็นไร — เป็น snapshot ที่เปลี่ยนช้า รอบหน้าเก็บต่อได้
+export async function fetchMetaAdsets(args: {
+  token: string;
+  accountIds?: string[];
+  /** เวลา (epoch ms) ที่ต้องหยุด — เลยแล้วคืนเท่าที่ได้ */
+  deadline?: number;
+}): Promise<{ adsets: AdsetInfo[]; issues: AccountIssue[]; done: number; total: number }> {
+  const { token, deadline } = args;
+  const issues: AccountIssue[] = [];
+  let accounts: { id: string; name: string }[];
+  if (args.accountIds && args.accountIds.length > 0) {
+    accounts = args.accountIds.map((id) => ({ id, name: id }));
+  } else {
+    const listed = await listAccounts(token);
+    accounts = listed.ok;
   }
 
-  return { rows, issues, adsets };
+  const adsets: AdsetInfo[] = [];
+  let done = 0;
+  for (const a of accounts) {
+    if (deadline && Date.now() >= deadline) break;
+    try {
+      adsets.push(...(await fetchAccountAdsets(token, a.id)));
+      done++;
+    } catch (e: any) {
+      issues.push({
+        id: a.id, name: a.name, status: "ADSET_FETCH_ERROR",
+        reason: redact(String(e?.message || e)).slice(0, 200),
+      });
+    }
+  }
+  return { adsets, issues, done, total: accounts.length };
 }

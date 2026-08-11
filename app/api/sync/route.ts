@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fetchMetaAds } from "@/lib/meta";
+import { fetchMetaAds, fetchMetaAdsets } from "@/lib/meta";
 import { fetchTikTokAds } from "@/lib/tiktok";
 import { supabaseEnabled, upsertRows, pruneStale, upsertAdsets } from "@/lib/supabase";
 
@@ -49,8 +49,10 @@ async function handle(req: NextRequest) {
   // เปิดไว้เป็นค่าเริ่มต้น: upsert อย่างเดียวไม่มีวันลบแถวค้าง และหลัง migration 0003
   // แถวเก่า (ad_id = ชื่อแอด) จะอยู่คู่กับแถวใหม่ (ad_id = ตัวเลข) → ตัวเลขเป็นสองเท่า
   const prune = req.nextUrl.searchParams.get("prune") !== "0";
-  // targeting/งบระดับ adset — payload หนัก ปิดตอน backfill ก้อนใหญ่ด้วย ?adsets=0
-  const wantAdsets = req.nextUrl.searchParams.get("adsets") !== "0";
+  // targeting/งบระดับ adset — ⚠️ payload หนักมาก ต้อง "ขอเอง" เท่านั้น (?adsets=1)
+  // เคยเปิดเป็นค่าเริ่มต้นแล้ว sync ทั้งรอบโดน FUNCTION_INVOCATION_TIMEOUT (60s)
+  // ตัวนี้เปลี่ยนช้า วันละครั้งพอ — มี workflow แยกยิงให้ (adsets-snapshot.yml)
+  const wantAdsets = req.nextUrl.searchParams.get("adsets") === "1";
   const t0 = Date.now();
   const syncedAt = new Date().toISOString();
   const result: any = { ok: true, since, until, prune, platforms: {} };
@@ -59,21 +61,32 @@ async function handle(req: NextRequest) {
     if (metaToken) {
       const accountIds = (process.env.META_AD_ACCOUNTS || "")
         .split(",").map((s) => s.trim()).filter(Boolean);
-      // เหลือเวลาน้อย (maxDuration 60s) → ข้าม adsets ไปก่อน ตัวเลขหลักสำคัญกว่า
-      const withAdsets = wantAdsets && Date.now() - t0 < 20_000;
-      const { rows, issues, adsets } = await fetchMetaAds({
-        token: metaToken, accountIds, since, until, withAdsets,
-      });
+      const { rows, issues } = await fetchMetaAds({ token: metaToken, accountIds, since, until });
       const n = await upsertRows(rows, syncedAt);
       // ลบได้เฉพาะบัญชีที่ "คืนแถวจริงรอบนี้" — บัญชีที่ error หรือคืนว่าง ห้ามแตะของเก่า
       const touched = [...new Set(rows.map((r) => r.accountId))];
       const pruned = prune ? await pruneStale("meta", since, until, syncedAt, touched) : 0;
-      const savedAdsets = adsets.length ? await upsertAdsets(adsets) : 0;
       result.platforms.meta = {
         fetched: rows.length, upserted: n, pruned, accounts: touched.length,
-        adsets: savedAdsets, issues: issues.length,
+        issues: issues.length,
         ...(issues.length ? { issueList: issues.slice(0, 5) } : {}),
       };
+
+      // targeting/งบ — ทำ "หลัง" ตัวเลขหลักลง DB แล้วเท่านั้น และเฉพาะเวลาที่เหลือ
+      // เก็บได้ไม่ครบไม่เป็นไร รอบหน้าเก็บต่อ · ตัวเลขหลักต้องไม่พังเพราะของแถม
+      if (wantAdsets) {
+        const budgetMs = 45_000 - (Date.now() - t0);
+        if (budgetMs > 5_000) {
+          const r = await fetchMetaAdsets({
+            token: metaToken, accountIds, deadline: t0 + 45_000,
+          });
+          result.platforms.meta.adsets = r.adsets.length ? await upsertAdsets(r.adsets) : 0;
+          result.platforms.meta.adsetAccounts = `${r.done}/${r.total}`;
+          if (r.issues.length) result.platforms.meta.adsetIssues = r.issues.slice(0, 3);
+        } else {
+          result.platforms.meta.adsets = "ข้าม (เวลาไม่พอ)";
+        }
+      }
     }
     if (ttToken) {
       const advertiserIds = (process.env.TIKTOK_ADVERTISER_IDS || "")

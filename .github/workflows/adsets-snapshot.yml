@@ -1,0 +1,28 @@
+# targeting + งบจริงระดับ adset — เก็บวันละครั้ง
+#
+# ทำไมต้องแยกจาก keepalive-sync:
+#   payload targeting หนักมาก (~380KB/บัญชี × ~20 บัญชี) ถ้ารวมไปกับ sync ปกติ
+#   จะโดน FUNCTION_INVOCATION_TIMEOUT (Vercel 60s) แล้วตัวเลขหลักไม่ได้ลง DB เลย
+#   ของพวกนี้เปลี่ยนช้า (งบ/กลุ่มเป้าหมาย/วันที่สร้าง) วันละครั้งเหลือเฟือ
+#
+# ฝั่ง API มี deadline ในตัว — เก็บไม่ครบทุกบัญชีก็คืนเท่าที่ได้ รอบหน้าเก็บต่อ
+# ดูใน log ว่า adsetAccounts เป็น "N/M" — ถ้า N < M ติดกันหลายวันค่อยแบ่งเป็นหลายรอบ
+name: adsets-snapshot
+on:
+  schedule:
+    - cron: "40 20 * * *" # 03:40 เวลาไทย — ช่วงที่ไม่ชนกับ sync ปกติ (นาที 15)
+  workflow_dispatch:
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Snapshot adset targeting/budget
+        run: |
+          TODAY=$(date -u +%F)
+          # ขอ insights แค่วันเดียวเพื่อให้เหลือเวลาไปดึง adsets · prune=0 กันลบข้อมูลด้วยหน้าต่างแคบ ๆ
+          code=$(curl -s -o /tmp/adsets.json -w '%{http_code}' --max-time 115 \
+            "https://dashboard-ads-thanatos.vercel.app/api/sync?key=${{ secrets.CRON_SECRET }}&since=$TODAY&until=$TODAY&adsets=1&prune=0") || code=000
+          echo "HTTP $code"
+          head -c 2000 /tmp/adsets.json || true
+          echo
+          [ "$code" = "200" ] || echo "⚠️ snapshot ไม่สำเร็จ (non-fatal)"
