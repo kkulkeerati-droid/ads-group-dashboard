@@ -207,6 +207,12 @@ export interface AdView {
   /** ลำดับที่เท่าไหร่ในกลุ่มชื่อซ้ำ เรียงตามค่าแอดมากไปน้อย (1-based) */
   dupeRank: number;
   adsetId?: string; adsetName?: string; campaignId?: string; campaignName?: string;
+  /** ── ยอดของ "ทั้งชุด" (แอดที่ใช้งบก้อนเดียวกัน = อยู่ adset เดียวกัน) ──
+   *  งบเป็นของ adset ไม่ใช่ของแอด · ยิง 1:1:3 คือ 3 แอดหารงบก้อนเดียวกัน
+   *  กติกาที่อ้าง "งบต่อวัน" ต้องตัดสินทั้งชุด ไม่ใช่ทีละตัว
+   *  ไม่มี adsetId (ข้อมูลเก่า) → ถอยไปจับกลุ่มด้วยชื่อ ซึ่ง 1:1:3 ตั้งเหมือนกันอยู่แล้ว */
+  setAds: number; setSpend: number; setRevenue: number;
+  setReplies: number; setPurchasesValued: number;
   product: string; theme: string; audience: string;
   funnel: Funnel; funnelWhy: string; funnelSure: boolean; objective: string;
   isClone: boolean; parent: string | null; bumps: number;
@@ -253,6 +259,7 @@ export function buildAdViews(rows: AdRow[], until: string, recentDays = 3, prior
         nameDupes: 1, dupeRank: 1,
         adsetId: r.adsetId, adsetName: r.adsetName,
         campaignId: r.campaignId, campaignName: r.campaignName,
+        setAds: 1, setSpend: 0, setRevenue: 0, setReplies: 0, setPurchasesValued: 0,
         product: parseProduct(r.adName), theme: parseTheme(r.adName), audience: parseAudience(r.adName),
         funnel: f.stage, funnelWhy: f.why, funnelSure: f.sure, objective: classifyObjective(r.adName),
         isClone: c.isClone, parent: c.parent, bumps: budgetBumps(r.adName),
@@ -292,6 +299,25 @@ export function buildAdViews(rows: AdRow[], until: string, recentDays = 3, prior
   for (const list of byName.values()) {
     list.sort((a, b) => b.all.spend - a.all.spend);
     list.forEach((v, i) => { v.nameDupes = list.length; v.dupeRank = i + 1; });
+  }
+
+  // ยอดรวม "ทั้งชุด" — แอดที่ใช้งบก้อนเดียวกัน (adset เดียวกัน)
+  // ต้องมี เพราะกติกาที่อ้างงบต่อวันจะตัดสินผิดถ้าเอา spend รายตัวไปเทียบงบทั้งก้อน
+  const bySet = new Map<string, AdView[]>();
+  for (const v of views) {
+    const k = `${v.accountId}::${v.adsetId || v.adName.trim()}`;
+    const list = bySet.get(k);
+    if (list) list.push(v); else bySet.set(k, [v]);
+  }
+  for (const list of bySet.values()) {
+    const spend = list.reduce((s, v) => s + v.all.spend, 0);
+    const revenue = list.reduce((s, v) => s + v.all.revenue, 0);
+    const replies = list.reduce((s, v) => s + v.all.replies, 0);
+    const pv = list.reduce((s, v) => s + v.all.purchasesValued, 0);
+    for (const v of list) {
+      v.setAds = list.length; v.setSpend = spend; v.setRevenue = revenue;
+      v.setReplies = replies; v.setPurchasesValued = pv;
+    }
   }
 
   return views;
@@ -365,6 +391,10 @@ export function fatigueOf(v: AdView): Fatigue {
 //   1–5 ออเดอร์ = ดูก่อน · 10 = เริ่มวิเคราะห์ · 20–30 = เริ่มตัดสินใจ · 50+ = สเกลจริงจัง
 //   "อย่าสเกลเพราะ ROAS สวย แต่เพิ่งขายได้ 2 ออเดอร์"
 // ROAS จากออเดอร์เดียวไม่ใช่หลักฐาน — มันคือความบังเอิญที่ยังไม่ถูกพิสูจน์
+/** ตัวประกอบในชุด 1:1:3 ที่กินงบเกินสัดส่วนนี้ของทั้งชุดโดยไม่มียอด = รูรั่วจริง ไม่ใช่ "งบไหลไปหาตัวชนะ"
+ *  0.4 = สูงกว่าส่วนแบ่งเท่า ๆ กันของชุด 3 ตัว (33%) พอสมควร — ต้องกินเกินจริงถึงจะโดนสั่งปิด */
+export const SET_LEAK_SHARE = 0.4;
+
 export const ORDERS_ANALYZE = 10; // ต่ำกว่านี้ = ยังอ่านไม่ออก
 export const ORDERS_DECIDE = 20;  // ถึงตรงนี้ค่อยตัดสินใจได้
 export const ORDERS_SCALE = 30;   // ถึงตรงนี้ค่อยดันงบ/แตกตัวได้เต็มปาก
@@ -464,12 +494,23 @@ export function callFor(
   // ต้องเช็คก่อน MIN_SPEND_TO_JUDGE เพราะแอดมดงบ ฿300/วัน จะไม่มีวันถึง ฿300 ใน 1 วัน
   // ⚠️ ต้องไม่ทำงานเมื่อ "มีคนกลับมาคุยอยู่" — บทที่ 34 เองก็บอกว่าปิดแล้วให้แอดมินลากแชตต่อ
   //    ถ้ามีคนคุยอยู่จริง สิ่งที่ต้องแก้คือขั้นปิดการขาย (บทที่ 4) ไม่ใช่ฆ่าแอดที่กำลังส่งคนมาให้
+  //
+  // ⭐ งบเป็นของ adset ไม่ใช่ของแอด — ยิง 1:1:3 คือ 3 แอดหารงบก้อนเดียวกัน
+  //    ถ้าเอา spend รายตัวไปเทียบ 30% ของงบทั้งก้อน จะสั่งปิดตัวประกอบทีละตัว
+  //    ซึ่งชนกับหลัก 1:1:3 เอง: "หน้าที่ของ 3 ตัวไม่ใช่ให้เก่งเท่ากัน แต่มีไว้หาตัวแบก"
+  //    → ชุดที่มีหลายแอด ให้ตัดสิน "ทั้งชุด" · ชุดตัวเดียวก็เหมือนเดิม
   const antKill = v.budget ? v.budget * ANT_KILL_BUDGET_SHARE : 0;
+  const inSet = v.setAds > 1;
+  const setSpend = inSet ? v.setSpend : a.spend;
+  const setPV = inSet ? v.setPurchasesValued : a.purchasesValued;
+  const setReplies = inSet ? v.setReplies : a.replies;
   // purchasesValued — ออเดอร์มูลค่า ๐ ไม่ควรช่วยให้แอดที่ไม่ทำเงินรอดจากด่านนี้
-  if (antKill && a.purchasesValued === 0 && a.replies === 0 && a.spend >= antKill && ctx.peerHasRevenue && v.activeDays >= 1) {
-    return { action: "STOP", money: a.spend,
-      why: `งบในชื่อ ${M(v.budget!)}/วัน · ใช้ไป ${M(a.spend)} แล้วยังไม่มีออเดอร์สักรายการ`,
-      how: `กติกาแอดมด: เกิน ${Math.round(ANT_KILL_BUDGET_SHARE * 100)}% ของงบวันแล้วยังไม่มีการซื้อ = ปิดก่อน · ให้แอดมินลากแชตกระตุ้นปิดการขาย ถ้ามียอดเข้าค่อยเปิดกลับ` };
+  if (antKill && setPV === 0 && setReplies === 0 && setSpend >= antKill && ctx.peerHasRevenue && v.activeDays >= 1) {
+    return { action: "STOP", money: setSpend,
+      why: inSet
+        ? `ทั้งชุด ${v.setAds} แอด (งบ ${M(v.budget!)}/วัน) ใช้ไป ${M(setSpend)} แล้วยังไม่มีออเดอร์สักรายการ`
+        : `งบในชื่อ ${M(v.budget!)}/วัน · ใช้ไป ${M(setSpend)} แล้วยังไม่มีออเดอร์สักรายการ`,
+      how: `กติกาแอดมด: เกิน ${Math.round(ANT_KILL_BUDGET_SHARE * 100)}% ของงบวันแล้วยังไม่มีการซื้อ = ปิดก่อน${inSet ? " (ปิดทั้งชุด ไม่ใช่ทีละตัว — งบเป็นของชุด)" : ""} · ให้แอดมินลากแชตกระตุ้นปิดการขาย ถ้ามียอดเข้าค่อยเปิดกลับ` };
   }
 
   if (a.spend < MIN_SPEND_TO_JUDGE) {
@@ -487,6 +528,15 @@ export function callFor(
       return { action: "FIX_TRACKING", money: a.spend,
         why: `ใช้ ${M(a.spend)} แต่ทั้งกลุ่มไม่มียอดเข้าระบบเลย`,
         how: "เช็คก่อนว่าขายไม่ออกจริง หรือปิดการขายทางแชท/โทรแล้วยอดไม่ถูกส่งกลับ — อย่าเพิ่งปิด" };
+    }
+    // ── ตัวประกอบในชุด 1:1:3 ที่ยอด ๐ ทั้งที่ชุดขายได้ = ห้ามปิด ──
+    // "หน้าที่ของ 3 ตัวไม่ใช่ให้เก่งเท่ากัน แต่มีไว้หาตัวแบก" — งบไหลไปหาตัวชนะเอง
+    // ปิดตัวประกอบ = ทำลายกลไกคัดตัว แถมนับเป็น churn (เปิด-ปิดถี่จนไม่มีตัวไหนพ้น learning)
+    // ⚠️ ยกเว้นตัวที่กินงบเกิน SET_LEAK_SHARE ของทั้งชุด — นั่นไม่ใช่ "งบไหลไปหาตัวชนะ" แต่คือรูรั่วจริง
+    if (inSet && v.setRevenue > 0 && a.spend < v.setSpend * SET_LEAK_SHARE) {
+      return { action: "KEEP", money: 0,
+        why: `ยอด ๐ แต่เป็น 1 ใน ${v.setAds} แอดของชุดเดียวกัน ซึ่งทั้งชุดขายได้ ${M(v.setRevenue)} (ตัวนี้กินงบ ${Math.round((a.spend / v.setSpend) * 100)}% ของชุด)`,
+        how: "อย่าปิด — นี่คือวิธีทำงานของ 1:1:3 · งบจะไหลไปหาตัวแบกเอง ปิดตัวประกอบคือทำลายกลไกคัดตัว" };
     }
     if (a.results > 0 && a.replies === 0) {
       return { action: "STOP", money: a.spend,

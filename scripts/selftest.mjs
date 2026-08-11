@@ -21,7 +21,7 @@ try {
   // คอมไพล์เป็น CommonJS — ถ้า emit ESM ตัว import จะไม่มีนามสกุล .js แล้ว Node resolve ไม่เจอ
   // rootDir . เพื่อให้ผลลัพธ์อยู่ที่ <out>/lib/*.js เหมือนโครงต้นฉบับ
   execSync(
-    `npx tsc lib/ae.ts lib/decide.ts lib/content.ts --outDir "${out}" --rootDir . ` +
+    `npx tsc lib/ae.ts lib/decide.ts lib/content.ts lib/supabase.ts --outDir "${out}" --rootDir . ` +
       `--module commonjs --target es2022 --moduleResolution node --skipLibCheck`,
     { stdio: "pipe", cwd: ROOT }
   );
@@ -54,7 +54,8 @@ function ad(name, perDay, opts = {}) {
     const [spend, revenue, results = 10, replies = 5, purchases = 0] = v;
     rows.push({
       platform: "meta", accountId: opts.acct || "1", accountName: opts.acctName || "ACC",
-      adId: opts.adId, adName: name, spend, revenue, results, replies, purchases,
+      adId: opts.adId, adName: name, adsetId: opts.adset,
+      spend, revenue, results, replies, purchases,
       impressions: opts.impressions ?? Math.round(spend * 20),
       reach: opts.reach ?? Math.round(spend * 12),
       date: day(Number(d)),
@@ -366,6 +367,139 @@ console.log("\n━━━ 14) clone ต้องจับคู่กับ 'ต�
   check("จับ clone ได้ 1 ตัว", cc.length, 1);
   check("  ตัวแม่ที่จับคู่คือตัวที่เกิดก่อน", cc[0].parent.adId, "parent-old");
   check("  clone แพงกว่าตัวแม่ → สั่งปิด", cc[0].verdict, "kill");
+}
+
+console.log("\n━━━ 15) ⭐ งบเป็นของ adset ไม่ใช่ของแอด — กติกาแอดมดต้องตัดสินทั้งชุด ━━━");
+{
+  // ยิง 1:1:3 = 3 แอดหารงบ ฿600 ก้อนเดียวกัน · เส้นปิด = 30% ของ 600 = ฿180
+  // แต่ละตัวใช้แค่ ฿70 (ไม่ถึงเส้น) แต่ทั้งชุดใช้ ฿210 (ถึงเส้น) และไม่มีออเดอร์เลย
+  const N = "AI/AW/600/1Aug", D = [-6, -5, -4, -3, -2, -1, 0];
+  const rows = [
+    ...ad(N, spread(D, [10, 0, 8, 0, 0]), { adId: "a1", adset: "set-1" }),
+    ...ad(N, spread(D, [10, 0, 8, 0, 0]), { adId: "a2", adset: "set-1" }),
+    ...ad(N, spread(D, [10, 0, 8, 0, 0]), { adId: "a3", adset: "set-1" }),
+  ];
+  const views = buildAdViews(rows, UNTIL);
+  check("รู้ว่าอยู่ชุดเดียวกัน 3 แอด", views[0].setAds, 3);
+  check("  ยอดใช้ทั้งชุดถูกต้อง", Math.round(views[0].setSpend), 210);
+  const c = callFor(views[0], { peerHasRevenue: true, avgFreq: 1.2, windowStart: day(-6), windowEnd: UNTIL });
+  check("รายตัวใช้ ฿70 (ไม่ถึงเส้น) แต่ทั้งชุด ฿210 (ถึง) → สั่งปิด", c.action, "STOP");
+  check("  บอกว่าปิดทั้งชุด ไม่ใช่ทีละตัว", c.how.includes("ปิดทั้งชุด"), true);
+
+  // แอดเดี่ยว ๆ (ไม่ได้อยู่ชุด) ต้องทำงานเหมือนเดิมทุกอย่าง
+  const solo = ad(N, spread(D, [10, 0, 8, 0, 0]), { adId: "s1", adset: "set-solo" });
+  check("แอดเดี่ยวใช้ ฿70 → ยังไม่ถึงเส้น ไม่ปิด", call(solo, N).action, "WAIT");
+}
+
+console.log("\n━━━ 16) ⭐ ตัวประกอบในชุด 1:1:3 ที่ยอด ๐ ห้ามสั่งปิด ━━━");
+{
+  // "หน้าที่ของ 3 ตัวไม่ใช่ให้เก่งเท่ากัน แต่มีไว้หาตัวแบก" — งบไหลไปหาตัวชนะเอง
+  // ก่อนแก้ ad_id ทั้ง 3 ตัวถูกยุบเป็นแถวเดียวเลยไม่เจอปัญหานี้
+  // พอแยกแล้ว ตัวประกอบยอด ๐ จะโดนสั่งปิดทีละตัว = ทำลายกลไกคัดตัว
+  const N = "AI/AW/600/1Aug", D = [-6, -5, -4, -3, -2, -1, 0];
+  const rows = [
+    ...ad(N, spread(D, [200, 857.14, 20, 10, 2]), { adId: "carrier", adset: "set-2" }), // ตัวแบก ฿1,400 → ฿6,000
+    ...ad(N, spread(D, [50, 0, 20, 3, 0]), { adId: "extra-1", adset: "set-2" }),        // ฿350 ยอด ๐
+    ...ad(N, spread(D, [50, 0, 20, 3, 0]), { adId: "extra-2", adset: "set-2" }),
+  ];
+  const views = buildAdViews(rows, UNTIL);
+  const dud = views.find((v) => v.adId === "extra-1");
+  check("ตัวประกอบใช้ ฿350 ยอด ๐", Math.round(dud.all.spend), 350);
+  check("  แต่ทั้งชุดขายได้ ฿6,000", Math.round(dud.setRevenue), 6000);
+  const c = callFor(dud, { peerHasRevenue: true, avgFreq: 1.2, windowStart: day(-6), windowEnd: UNTIL });
+  check("ยอด ๐ แต่ชุดขายได้ → ห้ามปิด", c.action, "KEEP");
+  check("  อธิบายด้วยหลัก 1:1:3", c.how.includes("1:1:3"), true);
+}
+
+console.log("\n━━━ 17) แต่ตัวที่กินงบเกิน 40% ของชุดโดยไม่มียอด = รูรั่วจริง ต้องปิด ━━━");
+{
+  // กันไม่ให้ข้อ 16 กลายเป็นใบผ่านให้แอดเผาเงินฟรี
+  const N = "AI/AW/600/1Aug", D = [-6, -5, -4, -3, -2, -1, 0];
+  const rows = [
+    ...ad(N, spread(D, [57.14, 428.57, 20, 10, 1]), { adId: "carrier", adset: "set-3" }), // ฿400 → ฿3,000
+    ...ad(N, spread(D, [128.57, 0, 20, 0, 0]), { adId: "leak", adset: "set-3" }),          // ฿900 ยอด ๐ ไม่มีคนตอบ
+  ];
+  const views = buildAdViews(rows, UNTIL);
+  const leak = views.find((v) => v.adId === "leak");
+  check("ตัวรั่วกินงบเกิน 40% ของชุด", leak.all.spend > leak.setSpend * 0.4, true);
+  const c = callFor(leak, { peerHasRevenue: true, avgFreq: 1.2, windowStart: day(-6), windowEnd: UNTIL });
+  check("กินงบเกินสัดส่วน + ไม่มีใครตอบ → ยังสั่งปิด", c.action, "STOP");
+}
+
+console.log("\n━━━ 18) ⭐ ตัวเขียนลง Supabase — จุดที่บั๊กรากเกิด (เดิมไม่มีเทสเลย) ━━━");
+{
+  process.env.SUPABASE_URL = "https://selftest.supabase.co";
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "selftest-key";
+  const sb = createRequire(import.meta.url)(join(out, "lib/supabase.js"));
+
+  const calls = [];
+  const okRes = { ok: true, status: 200, json: async () => [], text: async () => "" };
+  const errRes = (msg) => ({ ok: false, status: 400, json: async () => ({}), text: async () => msg });
+  /** failFirstN = ให้ N ครั้งแรกตอบ error แบบ schema (จำลอง DB ที่ยังไม่ได้ migrate) */
+  const mockFetch = (failWith = null) => {
+    let n = 0;
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url: String(url), method: init.method, body: init.body ? JSON.parse(init.body) : null });
+      if (failWith && n++ === 0) return errRes(failWith);
+      return okRes;
+    };
+  };
+  const row = (adId, adName, spend, revenue, purchases) => ({
+    platform: "meta", accountId: "acc1", accountName: "ACC", adId, adName,
+    spend, impressions: 100, reach: 80, results: 5, replies: 2,
+    purchases, revenue, purchasesValued: revenue > 0 ? purchases : 0, date: "2026-08-07",
+  });
+
+  // 18.1 — 4 แอดชื่อเดียวกัน คนละ ad_id · วันเดียวกัน → ต้องส่งไป 4 แถว ไม่ใช่ 1
+  calls.length = 0; mockFetch();
+  await sb.upsertRows([
+    row("id-1", "AI/Ultra/600/7Aug", 429.66, 6080, 4),
+    row("id-2", "AI/Ultra/600/7Aug", 148.14, 0, 0),
+    row("id-3", "AI/Ultra/600/7Aug", 138.88, 0, 0),
+    row("id-4", "AI/Ultra/600/7Aug", 138.19, 0, 0),
+  ], "2026-08-11T10:00:00.000Z");
+  check("ชื่อซ้ำ 4 ตัว → ส่งลง DB 4 แถว", calls[0].body.length, 4);
+  check("  on_conflict ชี้ที่ ad_id", calls[0].url.includes("on_conflict=platform,account_id,ad_id,date"), true);
+  check("  ส่ง updated_at ไปด้วย (ไม่งั้น prune หาแถวค้างไม่เจอ)", calls[0].body[0].updated_at, "2026-08-11T10:00:00.000Z");
+  check("  ตัวชนะยังเป็น ฿429.66 ไม่ถูกบวกรวม", calls[0].body[0].spend, 429.66);
+
+  // 18.2 — ad_id เดียวกันซ้ำในหน้าเดียว → ต้องรวม (กัน Postgres 21000)
+  calls.length = 0; mockFetch();
+  await sb.upsertRows([row("id-9", "X", 100, 500, 1), row("id-9", "X", 50, 200, 1)]);
+  check("ad_id ซ้ำในก้อนเดียว → รวมเหลือแถวเดียว", calls[0].body.length, 1);
+  check("  ยอดถูกบวกเข้าด้วยกัน", calls[0].body[0].spend, 150);
+
+  // 18.3 — ⭐ DB ยังไม่ได้ migrate → ต้องถอยไปรวมตามชื่อ ไม่ใช่แค่ตัดคอลัมน์ทิ้ง
+  //        (ถ้าตัดคอลัมน์เฉย ๆ แถวชื่อซ้ำยังอยู่ครบ → ชน unique เก่า = 21000 พังทั้งรอบ)
+  calls.length = 0;
+  mockFetch(`Supabase 400: {"message":"Could not find the 'ad_id' column of 'ad_metrics_daily'","code":"PGRST204"}`);
+  await sb.upsertRows([
+    row("id-1", "AI/Ultra/600/7Aug", 429.66, 6080, 4),
+    row("id-2", "AI/Ultra/600/7Aug", 148.14, 0, 0),
+    row("id-3", "AI/Ultra/600/7Aug", 138.88, 0, 0),
+    row("id-4", "AI/Ultra/600/7Aug", 138.19, 0, 0),
+  ]);
+  check("DB เก่า → ยิงใหม่อีกรอบ (ไม่ throw)", calls.length, 2);
+  check("  รอบถอยรวมเหลือแถวเดียวตามชื่อ", calls[1].body.length, 1);
+  check("  ยอดรวมครบ ไม่มีอะไรหาย", Math.round(calls[1].body[0].spend * 100) / 100, 854.87);
+  check("  on_conflict ถอยไปที่ ad_name", calls[1].url.includes("on_conflict=platform,account_id,ad_name,date"), true);
+  check("  ไม่ส่งคอลัมน์ที่ DB ยังไม่มี", "ad_id" in calls[1].body[0], false);
+
+  // 18.4 — pruneStale ต้องแตะเฉพาะบัญชีที่ระบุ + เฉพาะแถวที่เก่ากว่ารอบ sync นี้
+  calls.length = 0; mockFetch();
+  await sb.pruneStale("meta", "2026-08-04", "2026-08-07", "2026-08-11T10:00:00.000Z", ["acc1", "acc2"]);
+  const q = calls[0].url;
+  check("prune ใช้ DELETE", calls[0].method, "DELETE");
+  check("  จำกัดช่วงวันที่", q.includes("date=gte.2026-08-04") && q.includes("date=lte.2026-08-07"), true);
+  check("  ลบเฉพาะแถวที่รอบนี้ไม่ได้แตะ", q.includes("updated_at=lt."), true);
+  check("  ลบเฉพาะบัญชีที่ส่งมา", q.includes('account_id=in.("acc1","acc2")'), true);
+  check("  ไม่ข้ามแพลตฟอร์ม", q.includes("platform=eq.meta"), true);
+
+  // 18.5 — ไม่มีบัญชีที่ดึงสำเร็จ → ห้ามลบอะไรเลย (กันเคส Meta ล่มแล้วข้อมูลหายเกลี้ยง)
+  calls.length = 0; mockFetch();
+  const gone = await sb.pruneStale("meta", "2026-08-04", "2026-08-07", "2026-08-11T10:00:00.000Z", []);
+  check("ไม่มีบัญชีที่ดึงได้ → ไม่ยิง DELETE เลย", calls.length, 0);
+  check("  คืนค่า 0", gone, 0);
 }
 
 rmSync(out, { recursive: true, force: true });

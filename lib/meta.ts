@@ -45,6 +45,13 @@ interface FetchArgs {
   withAdsets?: boolean;
 }
 
+// ⚠️ ข้อความ error ถูกส่งกลับไปที่ client (accountIssues) และขึ้นใน log ของ GitHub Actions
+//    error บางแบบ (โดยเฉพาะ network error) ลากทั้ง URL มาด้วย ซึ่งมี access_token ติดอยู่
+//    ตัดทิ้งก่อนเสมอ — token หลุดขึ้น log แล้วเรียกคืนไม่ได้
+const redact = (s: string) =>
+  s.replace(/access_token=[^&\s"')]+/gi, "access_token=***")
+   .replace(/\bEAA[A-Za-z0-9_-]{20,}/g, "***");
+
 // error ชั่วคราวของ Meta ที่ retry แล้วมักหาย (service unavailable / rate limit)
 const TRANSIENT_CODES = new Set([1, 2, 4, 17, 341, 613]);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -67,7 +74,7 @@ async function gget(url: string, tries = 3): Promise<any> {
         await sleep(500 * attempt); // backoff 0.5s, 1s
         continue;
       }
-      throw new Error(`Meta API: ${json.error.message} (code ${code})`);
+      throw new Error(redact(`Meta API: ${json.error.message} (code ${code})`));
     }
     return json;
   }
@@ -279,7 +286,7 @@ export async function fetchMetaAds(args: FetchArgs): Promise<MetaResult> {
         id: accounts[i].id,
         name: accounts[i].name,
         status: "FETCH_ERROR",
-        reason: String(r.reason).slice(0, 200),
+        reason: redact(String(r.reason)).slice(0, 200),
       });
   });
 
@@ -294,7 +301,7 @@ export async function fetchMetaAds(args: FetchArgs): Promise<MetaResult> {
           id: accounts[i].id,
           name: accounts[i].name,
           status: "ADSET_FETCH_ERROR",
-          reason: String(r.reason).slice(0, 200),
+          reason: redact(String(r.reason)).slice(0, 200),
         });
     });
   }

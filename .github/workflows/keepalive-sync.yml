@@ -1,14 +1,33 @@
 # กันหลับ + เติม cache สด: ยิง /api/sync ทุก 2 ชม.
 # - Supabase free จะ pause ถ้าไม่มี activity ~7 วัน → job นี้ทำให้ไม่หลับอีก
 # - ทุกรอบ sync ย้อนหลัง SYNC_DAYS วัน → ตัวเลข 7/30 วันสดสุด ~2 ชม.
+# - ตั้งแต่ 11 ส.ค. 69: /api/sync จะ prune แถวค้างให้ด้วย (แอดที่ถูกลบ Meta ไม่คืนมาแล้ว
+#   upsert อย่างเดียวไม่มีวันลบมันออก แถวเก่าบวกเข้ายอดรวมตลอดไป)
 name: keepalive-sync
 on:
   schedule:
     - cron: "15 */2 * * *"
   workflow_dispatch:
+    inputs:
+      since:
+        description: "backfill ตั้งแต่ (YYYY-MM-DD) — เว้นว่าง = ใช้ SYNC_DAYS ปกติ"
+        required: false
+      until:
+        description: "backfill ถึง (YYYY-MM-DD)"
+        required: false
 jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
       - name: Ping /api/sync
-        run: curl -sf --max-time 115 "https://dashboard-ads-thanatos.vercel.app/api/sync?key=${{ secrets.CRON_SECRET }}" || echo "sync failed (non-fatal)"
+        run: |
+          Q=""
+          if [ -n "${{ inputs.since }}" ]; then Q="&since=${{ inputs.since }}&until=${{ inputs.until }}"; fi
+          # เก็บ body ไว้อ่าน — เดิม -sf กลืนทั้ง status และ body ทำให้ sync พังแบบเงียบ ๆ ได้
+          # body เป็น JSON ที่เราสร้างเอง ไม่มี key/token อยู่ในนั้น (error ถูก redact ที่ lib/meta.ts แล้ว)
+          code=$(curl -s -o /tmp/sync.json -w '%{http_code}' --max-time 115 \
+            "https://dashboard-ads-thanatos.vercel.app/api/sync?key=${{ secrets.CRON_SECRET }}${Q}") || code=000
+          echo "HTTP $code"
+          head -c 2000 /tmp/sync.json || true
+          echo
+          [ "$code" = "200" ] || echo "⚠️ sync ไม่สำเร็จ (non-fatal — รอบหน้าอีก 2 ชม.)"
