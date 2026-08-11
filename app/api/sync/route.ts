@@ -77,6 +77,24 @@ async function handle(req: NextRequest) {
         distinctNames: new Set(rows.map((r) => `${r.accountId}::${r.adName}`)).size,
         rowsWithoutAdId: rows.filter((r) => !r.adId).length,
       },
+      // ⭐ รายแอดจริง — ชั้นที่ 2 ของบันได 3 ขั้น "ผลรวมตรง ไม่ได้แปลว่ารายแถวตรง"
+      //    ต้องเอาไปเทียบกับ Ads Manager ทีละตัว ไม่ใช่ดูแค่ยอดรวม
+      //    ชื่อซ้ำจะโผล่หลายบรรทัดโดยตั้งใจ — นั่นคือหลักฐานว่าไม่ถูกยุบรวมแล้ว
+      topAds: [...rows.reduce((m, r) => {
+        const k = `${r.accountId}::${r.adId || r.adName}`;
+        const a = m.get(k) || { adId: r.adId || null, adName: r.adName, spend: 0, revenue: 0, purchases: 0, days: 0 };
+        a.spend += r.spend; a.revenue += r.revenue || 0; a.purchases += r.purchases || 0; a.days++;
+        return m.set(k, a);
+      }, new Map<string, { adId: string | null; adName: string; spend: number; revenue: number; purchases: number; days: number }>()).values()]
+        .sort((x, y) => y.revenue - x.revenue || y.spend - x.spend)
+        .slice(0, 12)
+        .map((a) => ({
+          adId: a.adId, adName: a.adName, days: a.days,
+          spend: Math.round(a.spend * 100) / 100,
+          revenue: Math.round(a.revenue * 100) / 100,
+          purchases: a.purchases,
+          roas: a.spend > 0 ? Math.round((a.revenue / a.spend) * 100) / 100 : 0,
+        })),
       // แยกรายวัน — เวลายอดรวมไม่ตรง ตัวนี้บอกว่ากองอยู่วันไหน (เดาไม่ได้ ต้องเห็น)
       freshness: fresh,
       byDate: [...rows.reduce((m, r) => {
