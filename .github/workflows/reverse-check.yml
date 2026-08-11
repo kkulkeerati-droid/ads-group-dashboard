@@ -1,0 +1,44 @@
+# reverse-check — เทียบยอดที่เก็บไว้ใน cache กับ Ads Manager
+#
+# ⭐ กติกาที่ทำให้ไม่พลาดซ้ำ (บทเรียน 11 ส.ค. 69):
+#    "ผลรวมตรง ไม่ได้แปลว่ารายแถวตรง"
+#    ยอดรวม P-FLOW 2 ตรงกับ Ads Manager เป๊ะ แต่แอด 4 ตัวชื่อซ้ำถูกยุบเป็นแถวเดียว
+#    → ตัวชนะ ROAS 14.15 กลายเป็น 6.49 แล้วตกด่านสเกล
+#
+# ต้องดู 3 ชั้น:
+#   1. totals      ตรงกับ Ads Manager ไหม
+#   2. units.rows vs units.distinctAdIds vs units.distinctNames
+#      distinctNames << distinctAdIds = มีชื่อซ้ำเยอะ (ปกติของบ้านนี้ ยิง 1:1:3)
+#   3. units.rowsWithoutAdId ต้องเป็น 0 — ถ้าไม่ใช่ = ช่วงนี้ยังไม่ได้ re-sync หลัง migration
+#      ตราบใดที่ยังไม่ 0 ตัวเลข "รายแอด" ของช่วงนี้ยังเชื่อไม่ได้
+#
+# ตัวเลขที่ใช้เทียบ (ยืนยันกับ Ads Manager แล้ว):
+#   P-FLOW 2 (925967868831243) · 4–10 ส.ค. 69
+#   ค่าแอด ฿14,333.92 · ยอดขาย ฿30,301.79 · ออเดอร์ 88 · ROAS 2.11
+name: reverse-check
+on:
+  workflow_dispatch:
+    inputs:
+      since:
+        description: "ตั้งแต่ (YYYY-MM-DD)"
+        required: true
+        default: "2026-08-04"
+      until:
+        description: "ถึง (YYYY-MM-DD)"
+        required: true
+        default: "2026-08-10"
+      account:
+        description: "ad account id (เว้นว่าง = ทุกบัญชี)"
+        required: false
+        default: "925967868831243"
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read cache totals (ไม่เขียน ไม่ลบ)
+        run: |
+          code=$(curl -s -o /tmp/check.json -w '%{http_code}' --max-time 60 \
+            "https://dashboard-ads-thanatos.vercel.app/api/sync?key=${{ secrets.CRON_SECRET }}&check=1&since=${{ inputs.since }}&until=${{ inputs.until }}&account=${{ inputs.account }}") || code=000
+          echo "HTTP $code"
+          cat /tmp/check.json
+          echo

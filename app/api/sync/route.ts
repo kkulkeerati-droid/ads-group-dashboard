@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchMetaAds, fetchMetaAdsets } from "@/lib/meta";
 import { fetchTikTokAds } from "@/lib/tiktok";
-import { supabaseEnabled, upsertRows, pruneStale, upsertAdsets } from "@/lib/supabase";
+import { supabaseEnabled, upsertRows, pruneStale, upsertAdsets, readRows } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -42,6 +42,44 @@ async function handle(req: NextRequest) {
   const qUntil = req.nextUrl.searchParams.get("until");
   const since = qSince || isoDaysAgo(days);
   const until = qUntil || isoDaysAgo(0);
+
+  // ── โหมดอ่านอย่างเดียว: reverse-check ยอดใน cache เทียบกับ Ads Manager ──
+  // ไม่ดึง ไม่เขียน ไม่ลบ · มีไว้ตอบคำถามเดียว "เลขที่เก็บไว้ตรงกับต้นทางไหม"
+  // ⭐ ต้องดูทั้ง 3 ชั้น ไม่ใช่แค่ผลรวม — ผลรวมตรงไม่ได้แปลว่ารายแถวตรง
+  //    (บั๊กราก 11 ส.ค. 69: ยอดรวมบัญชีตรงเป๊ะ แต่แอด 4 ตัวถูกยุบเป็นแถวเดียว)
+  if (req.nextUrl.searchParams.get("check") === "1") {
+    const acct = req.nextUrl.searchParams.get("account") || "";
+    const all = await readRows("meta", since, until);
+    const rows = acct ? all.filter((r) => r.accountId === acct) : all;
+    const sum = (f: (r: (typeof rows)[0]) => number) =>
+      Math.round(rows.reduce((s, r) => s + f(r), 0) * 100) / 100;
+    const byAcct = new Map<string, { name: string; spend: number; revenue: number; purchases: number }>();
+    for (const r of rows) {
+      const a = byAcct.get(r.accountId) || { name: r.accountName, spend: 0, revenue: 0, purchases: 0 };
+      a.spend += r.spend; a.revenue += r.revenue || 0; a.purchases += r.purchases || 0;
+      byAcct.set(r.accountId, a);
+    }
+    return NextResponse.json({
+      ok: true, mode: "check", since, until, account: acct || "ทุกบัญชี",
+      totals: {
+        spend: sum((r) => r.spend),
+        revenue: sum((r) => r.revenue || 0),
+        purchases: sum((r) => r.purchases || 0),
+        purchasesValued: sum((r) => r.purchasesValued || 0),
+        roas: sum((r) => r.spend) > 0 ? Math.round((sum((r) => r.revenue || 0) / sum((r) => r.spend)) * 100) / 100 : 0,
+      },
+      // หน่วยนับ — ตัวชี้ว่าแถวถูกยุบรวมอยู่หรือยัง
+      units: {
+        rows: rows.length,
+        distinctAdIds: new Set(rows.filter((r) => r.adId).map((r) => `${r.accountId}::${r.adId}`)).size,
+        distinctNames: new Set(rows.map((r) => `${r.accountId}::${r.adName}`)).size,
+        rowsWithoutAdId: rows.filter((r) => !r.adId).length,
+      },
+      byAccount: [...byAcct.entries()]
+        .map(([id, a]) => ({ id, ...a, spend: Math.round(a.spend * 100) / 100, revenue: Math.round(a.revenue * 100) / 100 }))
+        .sort((x, y) => y.spend - x.spend),
+    });
+  }
 
   const metaToken = process.env.META_ACCESS_TOKEN;
   const ttToken = process.env.TIKTOK_ACCESS_TOKEN;
