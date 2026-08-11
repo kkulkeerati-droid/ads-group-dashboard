@@ -444,6 +444,9 @@ console.log("\n━━━ 18) ⭐ ตัวเขียนลง Supabase — จ
       return okRes;
     };
   };
+  // ตัวคั่นเดียวกับที่ lib/supabase.ts ใช้ — เขียนเป็น escape ห้ามวางอักขระดิบ
+  // (อักขระ control ดิบทำให้ไฟล์กลายเป็น binary · grep/diff/รีวิวใช้ไม่ได้)
+  const SEP = "\u001F";
   const row = (adId, adName, spend, revenue, purchases) => ({
     platform: "meta", accountId: "acc1", accountName: "ACC", adId, adName,
     spend, impressions: 100, reach: 80, results: 5, replies: 2,
@@ -469,8 +472,14 @@ console.log("\n━━━ 18) ⭐ ตัวเขียนลง Supabase — จ
   check("ad_id ซ้ำในก้อนเดียว → รวมเหลือแถวเดียว", calls[0].body.length, 1);
   check("  ยอดถูกบวกเข้าด้วยกัน", calls[0].body[0].spend, 150);
 
-  // 18.3 — ⭐ DB ยังไม่ได้ migrate → ต้องถอยไปรวมตามชื่อ ไม่ใช่แค่ตัดคอลัมน์ทิ้ง
-  //        (ถ้าตัดคอลัมน์เฉย ๆ แถวชื่อซ้ำยังอยู่ครบ → ชน unique เก่า = 21000 พังทั้งรอบ)
+  // 18.3 — ⭐⭐ หัวใจของการแก้: DB ยังไม่ได้ migrate แต่ตัวเลขรายแอดต้องยัง "ถูก"
+  //
+  // ทางแก้ตรงไปตรงมาคือเพิ่มคอลัมน์ ad_id แล้วเปลี่ยน unique key — แต่ DDL รันผ่าน
+  // PostgREST ไม่ได้ ต้องเปิดหน้าเว็บ Supabase รันมือ ซึ่งอาจไม่ได้เกิดขึ้นอีกนาน
+  //
+  // เดิมโหมดถอย = ยุบ 4 แอดเป็นแถวเดียวตามชื่อ (ยอดรวมถูก แต่รายแอดผิด = บั๊กรากยังอยู่)
+  // ตอนนี้เขียน ad_name เป็นค่าประกอบ <ชื่อ><ad_id> → unique key เดิมแยกแอดได้เอง
+  // → ไม่ต้องรอ migration ตัวเลขรายแอดก็ถูกแล้ว
   calls.length = 0;
   mockFetch(`Supabase 400: {"message":"Could not find the 'ad_id' column of 'ad_metrics_daily'","code":"PGRST204"}`);
   await sb.upsertRows([
@@ -480,10 +489,36 @@ console.log("\n━━━ 18) ⭐ ตัวเขียนลง Supabase — จ
     row("id-4", "AI/Ultra/600/7Aug", 138.19, 0, 0),
   ]);
   check("DB เก่า → ยิงใหม่อีกรอบ (ไม่ throw)", calls.length, 2);
-  check("  รอบถอยรวมเหลือแถวเดียวตามชื่อ", calls[1].body.length, 1);
-  check("  ยอดรวมครบ ไม่มีอะไรหาย", Math.round(calls[1].body[0].spend * 100) / 100, 854.87);
+  check("  ⭐ ยังแยกเป็น 4 แถว ทั้งที่ DB ยังไม่ได้ migrate", calls[1].body.length, 4);
+  check("  ตัวชนะยังเป็น ฿429.66 ไม่ถูกเฉลี่ย", calls[1].body[0].spend, 429.66);
+  check("  ยอดรวมครบ ไม่มีอะไรหาย",
+    Math.round(calls[1].body.reduce((s, b) => s + b.spend, 0) * 100) / 100, 854.87);
+  check("  ad_name เป็นค่าประกอบที่มี ad_id อยู่ในตัว",
+    calls[1].body[0].ad_name, `AI/Ultra/600/7Aug${SEP}id-1`);
+  check("  แต่ละแถวได้ค่า ad_name ไม่ซ้ำกัน (= unique key เดิมแยกออก)",
+    new Set(calls[1].body.map((b) => b.ad_name)).size, 4);
   check("  on_conflict ถอยไปที่ ad_name", calls[1].url.includes("on_conflict=platform,account_id,ad_name,date"), true);
   check("  ไม่ส่งคอลัมน์ที่ DB ยังไม่มี", "ad_id" in calls[1].body[0], false);
+
+  // 18.3b — ฝั่งอ่านต้องถอดค่าประกอบกลับ ไม่งั้นหน้าเว็บโชว์ชื่อมีขยะต่อท้าย
+  calls.length = 0;
+  globalThis.fetch = async () => ({
+    ok: true, status: 200, text: async () => "",
+    json: async () => [
+      { platform: "meta", account_id: "acc1", account_name: "ACC",
+        ad_name: `AI/Ultra/600/7Aug${SEP}120247438208910686`, date: "2026-08-07",
+        spend: 429.66, impressions: 100, reach: 80, results: 5, replies: 2, purchases: 4, revenue: 6080 },
+      { platform: "meta", account_id: "acc1", account_name: "ACC",
+        ad_name: "แถวเก่าไม่มีตัวคั่น", date: "2026-08-07",
+        spend: 10, impressions: 1, reach: 1, results: 0, replies: 0, purchases: 0, revenue: 0 },
+    ],
+  });
+  const back = await sb.readRows("meta", "2026-08-07", "2026-08-07");
+  check("อ่านกลับ: ชื่อสะอาด ไม่มีค่าประกอบติดมา", back[0].adName, "AI/Ultra/600/7Aug");
+  check("  ได้ ad_id กลับมาด้วย", back[0].adId, "120247438208910686");
+  check("  แถวเก่าที่ไม่มีตัวคั่น → ชื่อเดิม ไม่มี ad_id", back[1].adName, "แถวเก่าไม่มีตัวคั่น");
+  check("  และรู้ว่าแถวเก่ายังไม่มี ad_id", back[1].adId, undefined);
+  check("  แถวเก่าคิด purchasesValued ย้อนได้ (คอลัมน์ยังไม่มีใน DB)", back[0].purchasesValued, 4);
 
   // 18.4 — pruneStale ต้องแตะเฉพาะบัญชีที่ระบุ + เฉพาะแถวที่เก่ากว่ารอบ sync นี้
   calls.length = 0; mockFetch();

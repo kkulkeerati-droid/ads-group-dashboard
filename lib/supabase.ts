@@ -19,6 +19,32 @@ const ADSET_TABLE = "ad_adsets";
  *  แถวที่ ad_id == ad_name = แถวเก่าที่ยัง "รวมชื่อซ้ำ" อยู่ ต้อง re-sync ทับ */
 const rowAdId = (r: AdRow) => r.adId || r.adName;
 
+// ─── ⭐ ฝัง ad_id ลงไปในค่าที่เขียนใส่คอลัมน์ ad_name ────────────────────
+//
+// ทำไมต้องทำแบบนี้:
+//   unique key ของตารางคือ (platform, account_id, ad_name, date)
+//   ทีมยิง 1:1:3 ตั้งชื่อโฆษณาทั้งชุดเหมือนกัน → แอดคนละตัวชน key เดียวกัน → ถูกยุบเป็นแถวเดียว
+//   ทางแก้ที่ "ถูกที่สุด" คือเพิ่มคอลัมน์ ad_id แล้วเปลี่ยน unique key (migration 0003)
+//   แต่ DDL รันผ่าน PostgREST ไม่ได้ ต้องเปิดหน้าเว็บ Supabase รันมือ
+//
+//   → แทนที่จะรอ ทำให้ "key เดิมถูกต้องเอง" ด้วยการเขียนค่าเป็น  <ชื่อจริง>␟<ad_id>
+//     แอดคนละตัวได้ค่าไม่ซ้ำกันทันที · ไม่ต้องแตะ schema เลย · ทำงานได้ทั้งก่อนและหลัง migration
+//
+//   ␟ = U+001F (unit separator) เลือกตัวนี้เพราะ:
+//     - Postgres text เก็บได้ (ต่างจาก U+0000 ที่ Postgres เก็บไม่ได้)
+//     - ไม่มีทางโผล่ในชื่อแอดที่คนพิมพ์เอง → split แล้วไม่มีวันตัดผิดที่
+//
+// ⚠️ ผลข้างเคียงที่ต้องรู้: เปิดตาราง ad_metrics_daily ใน Supabase ตรง ๆ จะเห็น ad_name
+//    เป็นค่าประกอบ ไม่ใช่ชื่อสวย ๆ · ฝั่งอ่าน (readRows) ถอดกลับให้แล้ว หน้าเว็บเห็นชื่อปกติ
+//    ถ้าจะ query มือใน SQL Editor ให้ใช้  split_part(ad_name, chr(31), 1)  เป็นชื่อจริง
+const NAME_SEP = "\u001F";
+const encodeName = (r: AdRow) => (r.adId ? `${r.adName}${NAME_SEP}${r.adId}` : r.adName);
+function decodeName(stored: string): { adName: string; adId?: string } {
+  const i = (stored || "").indexOf(NAME_SEP);
+  if (i < 0) return { adName: stored };
+  return { adName: stored.slice(0, i), adId: stored.slice(i + 1) || undefined };
+}
+
 async function sb(path: string, init: RequestInit) {
   const res = await fetch(`${URL}/rest/v1/${path}`, {
     ...init,
@@ -48,7 +74,8 @@ export async function upsertRows(rows: AdRow[], syncedAt?: string): Promise<numb
     account_id: r.accountId,
     account_name: r.accountName,
     ad_id: rowAdId(r),
-    ad_name: r.adName,
+    // ค่าประกอบ <ชื่อจริง>␟<ad_id> — ทำให้ unique key เดิมแยกแอดคนละตัวออกจากกันได้เอง
+    ad_name: encodeName(r),
     adset_id: r.adsetId || null,
     adset_name: r.adsetName || null,
     campaign_id: r.campaignId || null,
@@ -88,9 +115,10 @@ export async function upsertRows(rows: AdRow[], syncedAt?: string): Promise<numb
     }
     return [...byKey.values()];
   };
-  const payloadById = mergeBy((p) => `${p.platform}|${p.account_id}|${p.ad_id}|${p.date}`);
-  // โหมดถอย: รวมตามชื่อแบบเดิม (ตัวเลขรายแอดผิด แต่ยอดรวมยังถูก และระบบไม่ล่ม)
-  const payloadByName = () => mergeBy((p) => `${p.platform}|${p.account_id}|${p.ad_name}|${p.date}`);
+  // ⭐ key เดียวใช้ได้ทั้ง 2 โหมด — ad_name ที่เขียนลงไปเป็นค่าประกอบที่มี ad_id อยู่ในตัวแล้ว
+  //    ก่อน migration: unique เดิม (…, ad_name, …) แยกแอดออกจากกันได้เพราะค่าประกอบไม่ซ้ำ
+  //    หลัง migration: unique ใหม่ (…, ad_id, …) แยกได้อยู่แล้ว · ค่าที่ merge ตรงกันทั้งคู่
+  const payload = mergeBy((p) => `${p.platform}|${p.account_id}|${p.ad_name}|${p.date}`);
 
   // คอลัมน์ใหม่อาจยังไม่มีในฐานข้อมูล (ยังไม่รัน migration 0002 / 0003)
   // → ถ้า Supabase ปฏิเสธ ให้ถอยทีละชั้น (ระบบไม่พังระหว่างรอ migrate)
@@ -120,7 +148,6 @@ export async function upsertRows(rows: AdRow[], syncedAt?: string): Promise<numb
   };
 
   let n = 0;
-  let payload = payloadById;
   for (let i = 0; i < payload.length; i += 500) {
     const raw = payload.slice(i, i + 500);
     try {
@@ -130,19 +157,11 @@ export async function upsertRows(rows: AdRow[], syncedAt?: string): Promise<numb
     } catch (e: any) {
       const msg = String(e?.message || e);
       if (!isSchemaErr(msg)) throw e;
-      if (!dropAdId) {
-        // ถอยไปโหมดชื่อ — ต้อง "รวมใหม่ทั้งก้อน" ไม่ใช่แค่ตัดคอลัมน์ทิ้ง
-        // ไม่งั้นแถวชื่อซ้ำยังอยู่ครบแล้วชน unique เก่าอีกรอบ
-        dropAdId = true;
-        payload = payloadByName();
-        i = -500; n = 0; // เริ่มก้อนใหม่ตั้งแต่ต้น (ก้อนที่ผ่านไปแล้วเป็น upsert idempotent)
-        continue;
-      }
-      if (!dropQuality) {
-        dropQuality = true;
-        i -= 500; // ลองก้อนเดิมซ้ำด้วย shape ใหม่
-        continue;
-      }
+      // ถอยไปยิงใส่ unique key เดิม (…, ad_name, …) + ตัดคอลัมน์ที่ยังไม่มีทิ้ง
+      // ⭐ ไม่ต้องรวมแถวใหม่ เพราะ ad_name ที่เขียนลงไปเป็นค่าประกอบที่มี ad_id อยู่แล้ว
+      //    → แอดคนละตัวยังแยกกันอยู่ ตัวเลขรายแอดถูกต้องแม้ยังไม่ได้ migrate
+      if (!dropAdId) { dropAdId = true; i -= 500; continue; }
+      if (!dropQuality) { dropQuality = true; i -= 500; continue; }
       throw e;
     }
   }
@@ -305,14 +324,17 @@ export async function readRows(
   return data.map((d) => {
     const revenue = Number(d.revenue) || 0;
     const purchases = Number(d.purchases) || 0;
+    // ถอดค่าประกอบ <ชื่อจริง>␟<ad_id> กลับ — แถวเก่าไม่มีตัวคั่นก็คืนชื่อเดิมเฉย ๆ
+    const dec = decodeName(d.ad_name);
+    // คอลัมน์ ad_id (ถ้ามี = migrate แล้ว) ชนะค่าที่ถอดจากชื่อ
+    // แถวเก่าที่ ad_id เท่ากับ ad_name = ยังไม่ได้ re-sync (ยังรวมชื่อซ้ำอยู่) → ถือว่าไม่มี
+    const colId = d.ad_id && d.ad_id !== d.ad_name ? d.ad_id : undefined;
     return {
       platform: d.platform,
       accountId: d.account_id,
       accountName: d.account_name,
-      // แถวเก่าที่ ad_id เท่ากับ ad_name = ยังไม่ได้ re-sync (ยังรวมชื่อซ้ำอยู่)
-      // ปล่อยเป็น undefined เพื่อให้ปลายทางรู้ว่า "ไม่มี ad_id จริง" ผ่าน quality.rowsWithoutAdId
-      adId: d.ad_id && d.ad_id !== d.ad_name ? d.ad_id : undefined,
-      adName: d.ad_name,
+      adId: colId || dec.adId,
+      adName: dec.adName,
       adsetId: d.adset_id || undefined,
       adsetName: d.adset_name || undefined,
       campaignId: d.campaign_id || undefined,
