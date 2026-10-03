@@ -21,13 +21,25 @@ jobs:
     steps:
       - name: Ping /api/sync
         run: |
-          Q=""
-          if [ -n "${{ inputs.since }}" ]; then Q="&since=${{ inputs.since }}&until=${{ inputs.until }}"; fi
-          # เก็บ body ไว้อ่าน — เดิม -sf กลืนทั้ง status และ body ทำให้ sync พังแบบเงียบ ๆ ได้
-          # body เป็น JSON ที่เราสร้างเอง ไม่มี key/token อยู่ในนั้น (error ถูก redact ที่ lib/meta.ts แล้ว)
-          code=$(curl -s -o /tmp/sync.json -w '%{http_code}' --max-time 115 \
-            "https://dashboard-ads-thanatos.vercel.app/api/sync?key=${{ secrets.CRON_SECRET }}${Q}") || code=000
-          echo "HTTP $code"
-          head -c 2000 /tmp/sync.json || true
-          echo
-          [ "$code" = "200" ] || echo "⚠️ sync ไม่สำเร็จ (non-fatal — รอบหน้าอีก 2 ชม.)"
+          # 3 ต.ค. 2026: ช่วงปกติ (SYNC_DAYS ราว 4 วัน) เกินเพดาน 60 วิของ /api/sync จนได้ 504 เกือบทุกรอบ
+          # (25 ก.ย.–3 ต.ค. ผ่านแค่ 4 จาก 30 รอบ แต่ workflow ขึ้นเขียวตลอด) → แบ่งยิงทีละ 2 วัน ซึ่งวัดแล้วผ่าน 200
+          sync() {
+            # เก็บ body ไว้อ่าน — เดิม -sf กลืนทั้ง status และ body ทำให้ sync พังแบบเงียบ ๆ ได้
+            # body เป็น JSON ที่เราสร้างเอง ไม่มี key/token อยู่ในนั้น (error ถูก redact ที่ lib/meta.ts แล้ว)
+            code=$(curl -s -o /tmp/sync.json -w '%{http_code}' --max-time 115 \
+              "https://dashboard-ads-thanatos.vercel.app/api/sync?key=${{ secrets.CRON_SECRET }}&since=$1&until=$2") || code=000
+            echo "[$1 → $2] HTTP $code"
+            head -c 600 /tmp/sync.json || true
+            echo
+            [ "$code" = "200" ]
+          }
+          if [ -n "${{ inputs.since }}" ]; then
+            sync "${{ inputs.since }}" "${{ inputs.until }}" || { echo "⚠️ backfill ไม่สำเร็จ — ลองช่วงสั้นลง (≤2 วัน)"; exit 1; }
+            exit 0
+          fi
+          ok=0
+          sync "$(date -u -d '1 day ago' +%F)" "$(date -u +%F)" && ok=$((ok+1))
+          sync "$(date -u -d '3 days ago' +%F)" "$(date -u -d '2 days ago' +%F)" && ok=$((ok+1))
+          echo "ผ่าน $ok/2 ช่วง"
+          # ล้มทั้ง 2 ช่วง = ให้ workflow เป็นสีแดง (GitHub ส่งอีเมลเตือน) แทนที่จะเงียบแบบเดิม
+          [ "$ok" -gt 0 ] || { echo "⚠️ sync ล้มทั้งหมด"; exit 1; }
